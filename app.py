@@ -114,6 +114,20 @@ def init_state():
     st.session_state.setdefault("use_clock_shrink", True)
 
 
+def team_labels_for_ui(current_game_id: str | None) -> tuple[str, str]:
+    """Return (home_label, away_label) for UI.
+
+    Uses last prediction if it matches the currently entered game id.
+    Falls back to generic labels.
+
+    Important: Streamlit widget labels may change; always use stable `key=`.
+    """
+    pred = st.session_state.get("last_pred") or {}
+    if current_game_id and pred.get("game_id") == current_game_id:
+        return (pred.get("home_name") or "Home"), (pred.get("away_name") or "Away")
+    return "Home", "Away"
+
+
 init_state()
 
 # -----------------------------
@@ -180,6 +194,10 @@ with st.container():
 
 st.write("")
 
+# Grab team labels if we already have a prediction for this game.
+_gid_hint = extract_gid_safe(st.session_state.get("game_input", ""))
+ui_home, ui_away = team_labels_for_ui(_gid_hint)
+
 # -----------------------------
 # Betting Inputs (directly under URL area)
 # -----------------------------
@@ -203,8 +221,8 @@ with st.container():
             step=0.5,
             help="Example: -3.5 means home is -3.5",
         )
-        odds_home = st.text_input("Home spread odds", value="-110")
-        odds_away = st.text_input("Away spread odds", value="-110")
+        odds_home = st.text_input(f"{ui_home} spread odds", value="-110", key="odds_home")
+        odds_away = st.text_input(f"{ui_away} spread odds", value="-110", key="odds_away")
 
     with b2:
         st.markdown("**Sizing**")
@@ -233,19 +251,19 @@ with st.container():
         )
 
         with st.expander("Moneyline + Team totals", expanded=False):
-            moneyline_home = st.text_input("Home moneyline odds", value="")
-            moneyline_away = st.text_input("Away moneyline odds", value="")
+            moneyline_home = st.text_input(f"{ui_home} moneyline odds", value="", key="moneyline_home")
+            moneyline_away = st.text_input(f"{ui_away} moneyline odds", value="", key="moneyline_away")
 
             st.write("")
             st.markdown("**Team totals**")
-            team_total_home = st.number_input("Home team total line", value=0.0, step=0.5)
-            odds_team_over_home = st.text_input("Home TT over odds", value="")
-            odds_team_under_home = st.text_input("Home TT under odds", value="")
+            team_total_home = st.number_input(f"{ui_home} team total line", value=0.0, step=0.5, key="team_total_home")
+            odds_team_over_home = st.text_input(f"{ui_home} TT over odds", value="", key="odds_team_over_home")
+            odds_team_under_home = st.text_input(f"{ui_home} TT under odds", value="", key="odds_team_under_home")
 
             st.write("")
-            team_total_away = st.number_input("Away team total line", value=0.0, step=0.5)
-            odds_team_over_away = st.text_input("Away TT over odds", value="")
-            odds_team_under_away = st.text_input("Away TT under odds", value="")
+            team_total_away = st.number_input(f"{ui_away} team total line", value=0.0, step=0.5, key="team_total_away")
+            odds_team_over_away = st.text_input(f"{ui_away} TT over odds", value="", key="odds_team_over_away")
+            odds_team_under_away = st.text_input(f"{ui_away} TT under odds", value="", key="odds_team_under_away")
 
     st.markdown('<div class="pp-muted">Tip: Track a bet to record how your probability/edge moves through the 2nd half.</div>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -420,10 +438,10 @@ with g3:
         h2_margin_mean = (float(h2m_lo) + float(h2m_hi)) / 2.0
 
     if h2_margin_mean is None:
-        st.markdown("<div class='pp-kpi'><div class='pp-muted'>2H Margin (home)</div><div style='font-size:20px;font-weight:800'>—</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='pp-kpi'><div class='pp-muted'>2H Margin ({home_name})</div><div style='font-size:20px;font-weight:800'>—</div></div>", unsafe_allow_html=True)
     else:
         st.markdown(
-            "<div class='pp-kpi'><div class='pp-muted'>2H Margin (home)</div>"
+            f"<div class='pp-kpi'><div class='pp-muted'>2H Margin ({home_name})</div>"
             f"<div style='font-size:20px;font-weight:800'>{float(h2_margin_mean):.2f}</div>"
             + (f"<div class='pp-muted'>80%: {float(h2m_lo):.1f} – {float(h2m_hi):.1f}</div>" if h2m_lo is not None else "")
             + "</div>",
