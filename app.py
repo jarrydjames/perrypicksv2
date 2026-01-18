@@ -254,7 +254,7 @@ with st.container():
 # Backtest log monitor (optional)
 # -----------------------------
 with st.expander("🧾 Monitor overnight backtest log", expanded=False):
-    render_log_monitor(logs_dir="logs", max_lines_default=250)
+    render_log_monitor(logs_dir="logs", max_lines_default=250, key_prefix="logmon")
 
 st.write("")
 
@@ -561,10 +561,4 @@ render_tracking_panel(
     snapshot_every_min=int(st.session_state.snapshot_every_min),
 )
 st.markdown("</div>", unsafe_allow_html=True)
-
-# -----------------------------
-# Backtest log monitor (optional)
-# -----------------------------
-with st.expander("🧾 Monitor overnight backtest log", expanded=False):
-    render_log_monitor(logs_dir="logs", max_lines_default=250)
 

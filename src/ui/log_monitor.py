@@ -46,8 +46,11 @@ def _tail_text(path: str, max_lines: int) -> str:
         return f"[error reading log] {e!r}"
 
 
-def render_log_monitor(*, logs_dir: str = "logs", max_lines_default: int = 200) -> None:
-    """Tiny Streamlit UI to monitor the latest overnight backtest log."""
+def render_log_monitor(*, logs_dir: str = "logs", max_lines_default: int = 200, key_prefix: str = "logmon") -> None:
+    """Tiny Streamlit UI to monitor the latest overnight backtest log.
+
+    `key_prefix` is required if you render this component multiple times on the same page.
+    """
 
     st.subheader("Overnight backtest log")
 
@@ -57,11 +60,24 @@ def render_log_monitor(*, logs_dir: str = "logs", max_lines_default: int = 200) 
             "Log file pattern",
             value=os.path.join(logs_dir, "nested_backtest_*.log"),
             help="We will display the newest file by modified time.",
+            key=f"{key_prefix}:pattern",
         )
     with c2:
-        max_lines = st.number_input("Lines to show", min_value=50, max_value=2000, value=int(max_lines_default), step=50)
+        max_lines = st.number_input(
+            "Lines to show",
+            min_value=50,
+            max_value=2000,
+            value=int(max_lines_default),
+            step=50,
+            key=f"{key_prefix}:max_lines",
+        )
     with c3:
-        auto = st.toggle("Auto refresh", value=False, help="Refresh this log viewer every few seconds.")
+        auto = st.toggle(
+            "Auto refresh",
+            value=False,
+            help="Refresh this log viewer every few seconds.",
+            key=f"{key_prefix}:auto",
+        )
 
     if auto:
         # No dependency on streamlit-autorefresh; Streamlit reruns on widget changes.
