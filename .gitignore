@@ -16,3 +16,16 @@ venv/
 
 # Logs
 *.log
+
+# Local app data
+/data/
+
+# If you ever want to commit example data, add a tracked subfolder like data/examples/
+
+
+# Wheels/cache/artifacts
+wheels/
+catboost_info/
+
+# Large model artifacts not used in production
+models_v2/random_forest_twohead.joblib

@@ -1,0 +1,11 @@
+# Dev-only dependencies (NOT required for Streamlit runtime)
+# Used for offline historical game-id collection.
+nba_api
+
+# Backtest-only modeling libs (keep Streamlit runtime deps clean)
+xgboost
+catboost
+
+# For safe token counting/truncation if/when you add OpenAI calls
+# (dev-only; do NOT require for Streamlit runtime)
+tiktoken

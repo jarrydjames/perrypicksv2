@@ -1,0 +1,20 @@
+cd /Users/jarrydhawley/Desktop/Predictor/perrypicks
+
+# (optional but nice) sanity check venv exists
+test -x .venv/bin/python || { echo "Missing .venv. Create it first (python -m venv .venv)"; exit 1; }
+
+mkdir -p logs
+
+RUN_TS="$(date +%Y%m%d_%H%M%S)"
+LOG_FILE="logs/nested_backtest_${RUN_TS}.log"
+
+nohup .venv/bin/python -m src.modeling.nested_walkforward_backtest \
+  --include-xgb --include-cat \
+  --train-min 1000 --test-size 200 --step-size 200 \
+  --inner-folds 3 --trials 15 \
+  > "$LOG_FILE" 2>&1 &
+
+echo "Started nested backtest."
+echo "PID: $!"
+echo "Log: $LOG_FILE"
+echo "Output CSV will be: data/processed/nested_walkforward_backtest.csv"

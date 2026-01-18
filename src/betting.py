@@ -131,8 +131,9 @@ def prob_over_under_from_mean_sd(mu: float, sd: float, line: float) -> float:
 
 
 def prob_spread_cover_from_mean_sd(mu_margin: float, sd_margin: float, spread_line_home_minus_away: float) -> float:
-    """
-    Returns P(home covers) assuming:
+    """Returns P(home covers).
+
+    Assumes:
       margin = home - away ~ Normal(mu_margin, sd_margin)
       home covers if margin > spread_line (home minus away)
     """
@@ -140,6 +141,15 @@ def prob_spread_cover_from_mean_sd(mu_margin: float, sd_margin: float, spread_li
     sd = float(sd_margin)
     line = float(spread_line_home_minus_away)
     return 1.0 - normal_cdf(line, mu=mu, sigma=sd)
+
+
+def prob_moneyline_win_from_mean_sd(mu_margin: float, sd_margin: float) -> float:
+    """Returns P(home wins) from the margin distribution.
+
+    Assumes margin = home - away ~ Normal(mu_margin, sd_margin).
+    Home wins if margin > 0.
+    """
+    return 1.0 - normal_cdf(0.0, mu=float(mu_margin), sigma=float(sd_margin))
 
 
 # -----------------------------
