@@ -144,6 +144,11 @@ def predict_from_game_id(gid_or_url: str) -> Dict[str, Any]:
     ht = team_totals_from_box_team(home)
     at = team_totals_from_box_team(away)
 
+    # Live score (current points) from boxscore team stats.
+    # Note: during halftime this should match 1H total; during 2H it updates live.
+    live_home_pts = int(ht.get("pts") or 0)
+    live_away_pts = int(at.get("pts") or 0)
+
     row: Dict[str, Any] = {
         "h1_home": float(h1_home),
         "h1_away": float(h1_away),
@@ -213,6 +218,10 @@ def predict_from_game_id(gid_or_url: str) -> Dict[str, Any]:
         "away_name": away_name,
         "h1_home": int(h1_home),
         "h1_away": int(h1_away),
+        "live_home": int(live_home_pts),
+        "live_away": int(live_away_pts),
+        "live_total": int(live_home_pts + live_away_pts),
+        "live_margin": int(live_home_pts - live_away_pts),
         "status": status,
         "pred": {
             "pred_2h_total": mu_total_2h,

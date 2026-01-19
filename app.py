@@ -397,6 +397,14 @@ with g1:
     st.markdown(f"**{away_name} @ {home_name}**")
     st.markdown(f"**Halftime:** {home_name} {int(h1_home)} – {int(h1_away)} {away_name}")
 
+    # Live score (if available)
+    live_home = int(pred.get("live_home") or 0)
+    live_away = int(pred.get("live_away") or 0)
+    if (live_home + live_away) > 0:
+        live_margin = live_home - live_away
+        st.markdown(f"**Score now:** {home_name} {live_home} – {live_away} {away_name}")
+        st.caption(f"Margin now (home): {live_margin:+d}")
+
     per = pred["_derived"].get("period")
     mmss = pred["_derived"].get("clock_mmss")
     if per and mmss:
