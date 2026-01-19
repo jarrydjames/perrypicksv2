@@ -74,7 +74,7 @@ def render_calibration_report(*, backtest_csv: Path = DEFAULT_BACKTEST_CSV) -> N
         if c in df.columns
     ]
 
-    st.dataframe(df[show_cols], use_container_width=True, height=260)
+    st.dataframe(df[show_cols], width="stretch", height=260)
 
     if best is not None and not best.empty:
         r = best.iloc[0].to_dict()

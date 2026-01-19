@@ -194,7 +194,7 @@ with st.container():
             help="Stores prediction snapshots for tracking probability drift."
         )
 
-        manual_refresh = st.button("🔄 Refresh now", use_container_width=True)
+        manual_refresh = st.button("🔄 Refresh now", width="stretch")
 
     # Auto refresh hook
     if st.session_state.auto_refresh and HAS_AUTOREFRESH:

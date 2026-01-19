@@ -60,7 +60,7 @@ def render_export_import(*, store: SQLiteStore, game_id: str) -> None:
             data=json.dumps(export, indent=2),
             file_name=f"perrypicks_{game_id}.json",
             mime="application/json",
-            use_container_width=True,
+            width="stretch",
         )
 
         up = st.file_uploader("Import a prior export (JSON)", type=["json"], accept_multiple_files=False)
@@ -109,7 +109,7 @@ def render_tracking_panel(
         idx = st.selectbox("Select a bet to track", list(range(len(labels))), format_func=lambda i: labels[i])
         chosen = recs[int(idx)]
 
-        if st.button("📌 Track selected bet", use_container_width=True):
+        if st.button("📌 Track selected bet", width="stretch"):
             bet_id = f"{game_id}:{int(time.time())}:{chosen['type']}:{chosen['side']}"
             store.add_bet(
                 bet_id=bet_id,
@@ -236,4 +236,4 @@ def render_tracking_panel(
                     st.info("Cashout is below fair value (per model). Holding is +EV vs cashout.")
 
     with st.expander("Raw values", expanded=False):
-        st.dataframe(df.tail(50), use_container_width=True)
+        st.dataframe(df.tail(50), width="stretch")
