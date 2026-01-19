@@ -32,7 +32,7 @@ def render_recommendations(
         st.markdown("**Recommendation:** No clear value bet from the lines entered (all edges are ≤ 0).")
     else:
         ev100 = top.get("ev_per_100")
-        ev_txt = f"EV **${float(ev100):+.2f}** per $100" if ev100 is not None else "EV n/a"
+        ev_txt = f"EV ${float(ev100):+.2f} per $100" if ev100 is not None else "EV n/a"
         st.markdown(
             f"**Recommendation:** {top['side']} at **{top['odds']}** looks best "
             f"({fmt_pct(top['p'])} to hit, edge **{top['edge']*100:.1f} pts** vs break-even, {ev_txt}). "
@@ -42,7 +42,7 @@ def render_recommendations(
     with st.expander("Show top bets", expanded=False):
         for i, r in enumerate(recs[:10]):
             ev100 = r.get("ev_per_100")
-            ev_line = f"EV per $100: **${float(ev100):+.2f}**" if ev100 is not None else "EV per $100: n/a"
+            ev_line = f"EV per $100: ${float(ev100):+.2f}" if ev100 is not None else "EV per $100: n/a"
 
             c1, c2 = st.columns([0.78, 0.22], vertical_alignment="center")
             with c1:
