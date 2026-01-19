@@ -180,8 +180,9 @@ def predict_from_game_id(gid_or_url: str) -> Dict[str, Any]:
     else:
         X_margin = X
 
-    mu_total_2h = float(total_model.total_model.predict(X_total)[0])
-    mu_margin_2h = float(margin_model.margin_model.predict(X_margin)[0])
+    # Pass numpy arrays to avoid sklearn warning: "X has feature names..."
+    mu_total_2h = float(total_model.total_model.predict(X_total.to_numpy(dtype=float))[0])
+    mu_margin_2h = float(margin_model.margin_model.predict(X_margin.to_numpy(dtype=float))[0])
 
     # 2H team points
     mu_h2_home = 0.5 * (mu_total_2h + mu_margin_2h)
