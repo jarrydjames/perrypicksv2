@@ -40,7 +40,11 @@ def render_recommendations(
         )
 
     with st.expander("Show top bets", expanded=False):
-        for i, r in enumerate(recs[:10]):
+        st.caption(f"Evaluated {len(recs)} bets. Showing top 10 by edge.")
+        show_all = st.checkbox("Show all evaluated bets", value=False, key="pp_show_all_bets")
+        shown = recs if show_all else recs[:10]
+
+        for i, r in enumerate(shown):
             ev100 = r.get("ev_per_100")
             ev_line = f"EV per $100: ${float(ev100):+.2f}" if ev100 is not None else "EV per $100: n/a"
 

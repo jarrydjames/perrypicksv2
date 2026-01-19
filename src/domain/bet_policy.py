@@ -88,7 +88,21 @@ def apply_policy(recs: List[Dict[str, Any]], policy: BetPolicy) -> List[Dict[str
     bets = [r for r in out if r.get("action") == "BET"]
     passes = [r for r in out if r.get("action") != "BET"]
 
-    bets = bets[: max(0, int(policy.max_bets))]
+    # IMPORTANT: do not drop evaluations.
+    # Policy should annotate what to do, not hide information.
+    max_bets = max(0, int(policy.max_bets))
+    if len(bets) > max_bets:
+        keep = bets[:max_bets]
+        overflow = bets[max_bets:]
+        for r in overflow:
+            r["action"] = "PASS"
+            r["stake_frac"] = 0.0
+            reasons = list(r.get("policy_reasons") or [])
+            reasons.append("max_bets")
+            r["policy_reasons"] = reasons
+        bets = keep
+        passes = overflow + passes
+
     return bets + passes
 
 
