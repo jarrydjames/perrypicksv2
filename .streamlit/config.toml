@@ -1,2 +1,11 @@
 [theme]
 base="dark"
+
+[server]
+# Streamlit Cloud + hot reload + Python 3.13 has been… spicy.
+# Disabling file watching reduces partial-import edge cases.
+fileWatcherType = "none"
+
+[runner]
+# Fast reruns are great until they aren't. This improves stability.
+fastReruns = false
