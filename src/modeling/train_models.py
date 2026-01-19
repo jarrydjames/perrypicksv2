@@ -9,6 +9,8 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from src.data.training_loader import DEFAULT_TRAINING_PARQUET, TrainingDataSpec, load_training_df
+
 from src.modeling.feature_columns import feature_columns
 from src.modeling.sklearn_models import GBTTwoHeadModel, RandomForestTwoHeadModel, RidgeTwoHeadModel
 
@@ -26,7 +28,7 @@ def train_from_parquet(
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    df = pd.read_parquet(parquet_path)
+    df = load_training_df(TrainingDataSpec(path=parquet_path))
     feats = feature_columns(df)
 
     X = df[feats].to_numpy(dtype=float)
@@ -70,7 +72,12 @@ def train_from_parquet(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", type=Path, required=True, help="Path to training parquet")
+    ap.add_argument(
+        "--data",
+        type=Path,
+        default=DEFAULT_TRAINING_PARQUET,
+        help=f"Path to training parquet (default: {DEFAULT_TRAINING_PARQUET})",
+    )
     ap.add_argument("--out-dir", type=Path, default=Path("models_v2"))
     ap.add_argument("--include-xgb", action="store_true", help="Backtest-only: train XGBoost two-head")
     ap.add_argument("--include-cat", action="store_true", help="Backtest-only: train CatBoost two-head")
