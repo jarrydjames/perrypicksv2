@@ -85,16 +85,19 @@ def prob_hit_for_bet(
     if bt == "spread":
         if mu_margin is None or sd_margin is None or line is None:
             return None
-        # Our stored convention in app: line is from the displayed side.
-        # If bet is on home team, compute P(home covers line).
-        # If bet is on away team, compute as 1 - P(home covers (-line)).
-        p_home_covers = prob_spread_cover_from_mean_sd(mu_margin, sd_margin, float(line))
+        # Normalise to "home spread" convention.
+        # If user specifies an away line (e.g. Away +12.5), the equivalent home line is -12.5.
         if home_name.lower() in s:
-            return p_home_covers
+            spread_home = float(line)
+            return prob_spread_cover_from_mean_sd(mu_margin, sd_margin, spread_home)
+
         if away_name.lower() in s:
+            spread_home = -float(line)
+            p_home_covers = prob_spread_cover_from_mean_sd(mu_margin, sd_margin, spread_home)
             return 1.0 - p_home_covers
+
         # Fallback: if side includes '+'/'-' only, assume it's home.
-        return p_home_covers
+        return prob_spread_cover_from_mean_sd(mu_margin, sd_margin, float(line))
 
     if bt == "moneyline":
         if mu_margin is None or sd_margin is None:

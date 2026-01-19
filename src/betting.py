@@ -130,17 +130,28 @@ def prob_over_under_from_mean_sd(mu: float, sd: float, line: float) -> float:
     return 1.0 - normal_cdf(line, mu=mu, sigma=sd)
 
 
-def prob_spread_cover_from_mean_sd(mu_margin: float, sd_margin: float, spread_line_home_minus_away: float) -> float:
-    """Returns P(home covers).
+def prob_spread_cover_from_mean_sd(mu_margin: float, sd_margin: float, spread_line_home: float) -> float:
+    """Returns P(home covers) using sportsbook spread convention.
 
-    Assumes:
+    Definitions:
       margin = home - away ~ Normal(mu_margin, sd_margin)
-      home covers if margin > spread_line (home minus away)
+      spread_line_home is the number shown next to the **home** team.
+        Examples:
+          home -12.5  -> spread_line_home = -12.5
+          home +4.5   -> spread_line_home = +4.5
+
+    A bet on the home spread wins when:
+      margin + spread_line_home > 0
+    Therefore:
+      P(home covers) = P(margin > -spread_line_home)
+
+    (The previous implementation incorrectly used `margin > spread_line_home`, which flips meaning for negative spreads.)
     """
     mu = float(mu_margin)
     sd = float(sd_margin)
-    line = float(spread_line_home_minus_away)
-    return 1.0 - normal_cdf(line, mu=mu, sigma=sd)
+    s = float(spread_line_home)
+    threshold = -s
+    return 1.0 - normal_cdf(threshold, mu=mu, sigma=sd)
 
 
 def prob_moneyline_win_from_mean_sd(mu_margin: float, sd_margin: float) -> float:
