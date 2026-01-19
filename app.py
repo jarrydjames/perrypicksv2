@@ -16,8 +16,9 @@ from src.betting import parse_american_odds
 from src.domain.bet_policy import list_presets, preset
 from src.domain.markets import MarketInputs, evaluate_markets
 from src.ui.recs import render_recommendations
+from src.ui.calibration import render_calibration_report
 from src.ui.styles import apply_base_styles
-from src.ui.tracking import SnapshotThrottle, maybe_record_snapshot, render_tracking_panel
+from src.ui.tracking import SnapshotThrottle, get_store, maybe_record_snapshot, render_tracking_panel
 from src.ui.log_monitor import render_log_monitor
 
 # -----------------------------
@@ -403,7 +404,7 @@ with g1:
     if (live_home + live_away) > 0:
         live_margin = live_home - live_away
         st.markdown(f"**Score now:** {home_name} {live_home} – {live_away} {away_name}")
-        st.caption(f"Margin now (home): {live_margin:+d}")
+        st.caption(f"Margin now ({home_name}): {live_margin:+d}")
 
     per = pred["_derived"].get("period")
     mmss = pred["_derived"].get("clock_mmss")
@@ -582,9 +583,33 @@ st.caption(
     "Includes totals, spreads, moneyline, and team totals (if you entered lines)."
 )
 
-render_recommendations(recs, kelly_mult=float(kelly_mult))
+def track_reco(r: dict) -> None:
+    store = get_store()
+    bet_id = f"{gid}:{now_utc_iso()}:{r.get('type')}:{r.get('side')}"
+    store.add_bet(
+        bet_id=bet_id,
+        game_id=gid,
+        bet_type=str(r.get("type")),
+        side=str(r.get("side")),
+        line=r.get("line"),
+        odds=int(r.get("odds")),
+        payload={"reco": r},
+    )
+    st.session_state[f"_pp_force_snapshot:{gid}"] = True
+    st.success("Bet tracked. (Next refresh will capture a snapshot)")
+
+
+render_recommendations(recs, kelly_mult=float(kelly_mult), on_track=track_reco)
 
 st.markdown("</div>", unsafe_allow_html=True)
+st.write("")
+
+# -----------------------------
+# Calibration report (offline)
+# -----------------------------
+with st.expander("📏 Model calibration (offline backtest)", expanded=False):
+    render_calibration_report()
+
 st.write("")
 
 # -----------------------------

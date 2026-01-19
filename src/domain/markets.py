@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from src.domain.bet_policy import BetPolicy, apply_policy
 
 from src.betting import (
+    american_to_decimal,
     breakeven_prob_from_american,
     kelly_fraction,
     prob_moneyline_win_from_mean_sd,
@@ -38,6 +39,13 @@ class MarketInputs:
     kelly_mult: float = 0.5
 
 
+def _ev_profit(*, p: float, stake: float, odds: int) -> float:
+    """Expected profit (not return) given win prob and American odds."""
+    D = american_to_decimal(int(odds))
+    profit_if_win = float(stake) * (D - 1.0)
+    return float(p) * profit_if_win - (1.0 - float(p)) * float(stake)
+
+
 def _add_rec(
     recs: List[Dict[str, Any]],
     *,
@@ -49,6 +57,7 @@ def _add_rec(
     kelly_mult: float,
 ) -> None:
     be = breakeven_prob_from_american(odds)
+    ev100 = _ev_profit(p=float(p), stake=100.0, odds=int(odds))
     recs.append(
         {
             "type": bet_type,
@@ -58,6 +67,7 @@ def _add_rec(
             "p": float(p),
             "breakeven": float(be),
             "edge": float(p - be),
+            "ev_per_100": float(ev100),
             "kelly": float(kelly_fraction(p, odds) * float(kelly_mult)),
         }
     )

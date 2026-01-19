@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 import streamlit as st
 
@@ -13,7 +13,12 @@ def kelly_to_text(f: float) -> str:
     return f"{min(0.25, f) * 100:.1f}% of bankroll"
 
 
-def render_recommendations(recs: List[Dict[str, Any]], *, kelly_mult: float) -> None:
+def render_recommendations(
+    recs: List[Dict[str, Any]],
+    *,
+    kelly_mult: float,
+    on_track: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> None:
     """Mobile-friendly rec renderer.
 
     Avoid wide tables; use a compact list.
@@ -26,17 +31,35 @@ def render_recommendations(recs: List[Dict[str, Any]], *, kelly_mult: float) -> 
     if top["edge"] <= 0.0:
         st.markdown("**Recommendation:** No clear value bet from the lines entered (all edges are ≤ 0).")
     else:
+        ev100 = top.get("ev_per_100")
+        ev_txt = f"EV **${float(ev100):+.2f}** per $100" if ev100 is not None else "EV n/a"
         st.markdown(
             f"**Recommendation:** {top['side']} at **{top['odds']}** looks best "
-            f"({fmt_pct(top['p'])} to hit, edge **{top['edge']*100:.1f} pts** vs break-even). "
+            f"({fmt_pct(top['p'])} to hit, edge **{top['edge']*100:.1f} pts** vs break-even, {ev_txt}). "
             f"Suggested size (Kelly×{kelly_mult:.2f}): **{kelly_to_text(top['kelly'])}**."
         )
 
     with st.expander("Show top bets", expanded=False):
-        for r in recs[:10]:
-            st.markdown(
-                f"**{r['type']}** — {r['side']} @ `{r['odds']}`\n\n"
-                f"P(hit): **{fmt_pct(r['p'])}**  ·  Break-even: {fmt_pct(r['breakeven'])}  ·  Edge: **{r['edge']*100:.1f} pts**\n\n"
-                f"Kelly: {kelly_to_text(r['kelly'])}"
-            )
+        for i, r in enumerate(recs[:10]):
+            ev100 = r.get("ev_per_100")
+            ev_line = f"EV per $100: **${float(ev100):+.2f}**" if ev100 is not None else "EV per $100: n/a"
+
+            c1, c2 = st.columns([0.78, 0.22], vertical_alignment="center")
+            with c1:
+                action = r.get("action")
+                stake_frac = float(r.get("stake_frac", 0.0) or 0.0)
+                action_txt = f"**{action}**" if action else ""
+                stake_txt = f"Stake: **{stake_frac*100:.2f}%**" if action == "BET" else "Stake: 0%"
+
+                st.markdown(
+                    f"{action_txt}  **{r['type']}** — {r['side']} @ `{r['odds']}`\n\n"
+                    f"P(hit): **{fmt_pct(r['p'])}**  ·  Break-even: {fmt_pct(r['breakeven'])}  ·  Edge: **{r['edge']*100:.1f} pts**\n\n"
+                    f"{ev_line}  ·  Kelly: {kelly_to_text(r['kelly'])}  ·  {stake_txt}"
+                )
+
+            with c2:
+                if on_track is not None and r.get("action") == "BET":
+                    if st.button("📌 Track", key=f"pp_track_rec_{i}", use_container_width=True):
+                        on_track(r)
+
             st.divider()
