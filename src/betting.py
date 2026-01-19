@@ -196,4 +196,14 @@ def normal_from_q10q90(q10: float, q90: float, default_sd: float | None = None):
 # Optional: formatting helpers
 # -----------------------------
 def fmt_pct(x: float, digits: int = 1) -> str:
-    return f"{100.0*float(x):.{digits}f}%"
+    """Format a probability as a percent string.
+
+    Note: we intentionally avoid displaying hard 0.0% / 100.0% unless the value is
+    truly extreme. This is *display-only*; we do not clamp the underlying math.
+    """
+    p = float(x)
+    if p >= 0.999:
+        return ">99.9%"
+    if p <= 0.001:
+        return "<0.1%"
+    return f"{100.0*p:.{digits}f}%"

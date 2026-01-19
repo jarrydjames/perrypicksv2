@@ -86,15 +86,24 @@ def minutes_remaining(period: int | None, clock_str: str | None) -> float | None
     return periods_left_after_this * 12.0 + mins_left_in_period
 
 
-def shrink_sd_with_clock(sd: float, min_rem: float | None, min_total: float = 24.0) -> float:
-    """
-    Shrink SD as time elapses in 2H. Scale ~ sqrt(remaining / 24).
+def shrink_sd_with_clock(
+    sd: float,
+    min_rem: float | None,
+    *,
+    min_total: float = 24.0,
+    min_sd: float = 1.0,
+) -> float:
+    """Shrink SD as time elapses in 2H.
+
+    We use a sqrt-time heuristic, but **never** allow SD to fall below a realistic floor.
+    Otherwise you'll get absurd 0%/100% probabilities.
     """
     if min_rem is None:
-        return sd
+        return max(float(min_sd), float(sd))
+
     rem_2h = min(24.0, max(0.0, float(min_rem)))
-    scale = (rem_2h / min_total) ** 0.5 if min_total > 0 else 1.0
-    return max(0.01, sd * scale)
+    scale = (rem_2h / float(min_total)) ** 0.5 if float(min_total) > 0 else 1.0
+    return max(float(min_sd), float(sd) * float(scale))
 
 
 def kelly_to_text(f: float) -> str:
@@ -320,8 +329,11 @@ def run_prediction():
     final_sd_margin = base_sd_margin
 
     if st.session_state.use_clock_shrink:
-        final_sd_total = shrink_sd_with_clock(final_sd_total, min_rem)
-        final_sd_margin = shrink_sd_with_clock(final_sd_margin, min_rem)
+        min_total_sd = max(4.0, 0.35 * float(base_sd_total))
+        min_margin_sd = max(3.0, 0.35 * float(base_sd_margin))
+
+        final_sd_total = shrink_sd_with_clock(final_sd_total, min_rem, min_sd=min_total_sd)
+        final_sd_margin = shrink_sd_with_clock(final_sd_margin, min_rem, min_sd=min_margin_sd)
 
     pred["_derived"] = {
         "min_remaining": min_rem,

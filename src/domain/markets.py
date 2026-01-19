@@ -151,8 +151,12 @@ def evaluate_markets(
         )
 
     # Team totals
+    # Important: don't underestimate uncertainty.
+    # If total ~ N(mu_T, sd_T) and margin ~ N(mu_M, sd_M) and we assume independence,
+    # then home = (T + M)/2 => Var(home) = (Var(T)+Var(M))/4.
+    # Away is analogous.
     if sd_team is None:
-        sd_team = max(0.01, float(sd_total) / 2.0)
+        sd_team = max(0.01, ((float(sd_total) ** 2 + float(sd_margin) ** 2) ** 0.5) / 2.0)
 
     if final_home_mu is not None and inputs.team_total_home and inputs.team_total_home > 0:
         if inputs.odds_team_over_home is not None and inputs.odds_team_under_home is not None:
