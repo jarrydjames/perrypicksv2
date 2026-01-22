@@ -106,9 +106,31 @@ def fetch_nba_odds_snapshot(
         "dateFormat": date_format,
     }
 
-    r = requests.get(url, params=params, timeout=timeout_s)
+    def _do_request(p: Dict[str, Any]) -> requests.Response:
+        return requests.get(url, params=p, timeout=timeout_s)
+
+    r = _do_request(params)
+
     if r.status_code != 200:
-        raise OddsAPIError(f"Odds API error: HTTP {r.status_code}: {r.text[:300]}")
+        # Fail-soft: if team_totals market isn't supported on this endpoint/plan,
+        # retry once without it so we can still autofill totals/spreads/moneylines.
+        try:
+            err = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        except Exception:
+            err = {}
+
+        msg = str(err.get("message") or r.text or "")
+        code = str(err.get("error_code") or "")
+
+        if r.status_code == 422 and code == "INVALID_MARKET" and "team_totals" in msg:
+            params_no_tt = dict(params)
+            params_no_tt["markets"] = ",".join(
+                [m for m in str(params.get("markets") or "").split(",") if m.strip() and m.strip() != "team_totals"]
+            )
+            r = _do_request(params_no_tt)
+
+        if r.status_code != 200:
+            raise OddsAPIError(f"Odds API error: HTTP {r.status_code}: {r.text[:300]}")
 
     events = r.json()
     if not isinstance(events, list):

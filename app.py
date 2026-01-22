@@ -545,7 +545,14 @@ if manual_refresh:
                 "team_total_away": snap.team_total_away,
                 "odds_team_over_away": str(snap.team_total_away_over_odds) if snap.team_total_away_over_odds is not None else None,
                 "odds_team_under_away": str(snap.team_total_away_under_odds) if snap.team_total_away_under_odds is not None else None,
-                "status": f"Auto-filled odds from Odds API ({snap.bookmaker or 'draftkings'}).",
+                "status": (
+                    f"Auto-filled odds from Odds API ({snap.bookmaker or 'draftkings'})."
+                    + (
+                        " Team totals not available via your Odds API endpoint/plan."
+                        if (snap.team_total_home is None and snap.team_total_away is None)
+                        else ""
+                    )
+                ),
             }
         except OddsAPIError as e:
             st.session_state["_pp_autofill_odds"] = {"status": f"Odds auto-fill failed: {e}"}
