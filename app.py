@@ -28,6 +28,9 @@ from src.ui.log_monitor import render_log_monitor
 # -----------------------------
 apply_base_styles()
 
+# UI flags
+SHOW_DEV_TOOLS = False
+
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -236,6 +239,25 @@ init_state()
 # -----------------------------
 # Header
 # -----------------------------
+def _render_logo() -> None:
+    import os
+
+    local_path = os.path.join("assets", "logo.png")
+    if os.path.exists(local_path):
+        st.image(local_path, width=180)
+        return
+
+    try:
+        logo_url = st.secrets.get("LOGO_URL")
+    except Exception:
+        logo_url = None
+
+    if logo_url:
+        st.image(str(logo_url), width=180)
+
+
+_render_logo()
+
 st.markdown(
     """
     <div class="pp-card">
@@ -447,10 +469,11 @@ with st.container():
 # -----------------------------
 # Backtest log monitor (optional)
 # -----------------------------
-with st.expander("🧾 Monitor overnight backtest log", expanded=False):
-    render_log_monitor(logs_dir="logs", max_lines_default=250, key_prefix="logmon")
+if SHOW_DEV_TOOLS:
+    with st.expander("🧾 Monitor overnight backtest log", expanded=False):
+        render_log_monitor(logs_dir="logs", max_lines_default=250, key_prefix="logmon")
 
-st.write("")
+    st.write("")
 
 # -----------------------------
 # Validate input before running
@@ -833,10 +856,11 @@ st.write("")
 # -----------------------------
 # Calibration report (offline)
 # -----------------------------
-with st.expander("📏 Model calibration (offline backtest)", expanded=False):
-    render_calibration_report()
+if SHOW_DEV_TOOLS:
+    with st.expander("📏 Model calibration (offline backtest)", expanded=False):
+        render_calibration_report()
 
-st.write("")
+    st.write("")
 
 # -----------------------------
 # Tracking (SQLite + Export/Import)
@@ -848,6 +872,8 @@ render_tracking_panel(
     away_name=away_name,
     recs=recs,
     snapshot_every_min=int(st.session_state.snapshot_every_min),
+    show_export_import=False,
+    show_snapshot_history=False,
 )
 st.markdown("</div>", unsafe_allow_html=True)
 

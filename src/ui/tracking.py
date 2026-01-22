@@ -93,6 +93,8 @@ def render_tracking_panel(
     away_name: str,
     recs: list[dict],
     snapshot_every_min: int,
+    show_export_import: bool = True,
+    show_snapshot_history: bool = True,
 ) -> None:
     """Tracking UX (multi-bet)."""
 
@@ -127,11 +129,15 @@ def render_tracking_panel(
     # View tracked bets
     bets = store.list_bets(game_id)
     if not bets:
-        render_export_import(store=store, game_id=game_id)
-        st.markdown("### Snapshot history")
-        st.caption("Snapshots are auto-recorded in the background while this page stays open.")
-        st.write(f"Snapshot interval: **every {snapshot_every_min} min**")
-        st.write(f"Saved snapshots: **{len(store.list_snapshots(game_id))}**")
+        if show_export_import:
+            render_export_import(store=store, game_id=game_id)
+
+        if show_snapshot_history:
+            st.markdown("### Snapshot history")
+            st.caption("Snapshots are auto-recorded in the background while this page stays open.")
+            st.write(f"Snapshot interval: **every {snapshot_every_min} min**")
+            st.write(f"Saved snapshots: **{len(store.list_snapshots(game_id))}**")
+
         return
 
     bet_labels = [f"{b.bet_type} — {b.side} @ {b.odds} ({b.created_ts_utc})" for b in bets]
@@ -142,7 +148,11 @@ def render_tracking_panel(
         for b in bets:
             st.markdown(f"**{b.bet_type}** — {b.side} @ `{b.odds}`  ·  {b.created_ts_utc}")
 
-    render_export_import(store=store, game_id=game_id)
+    if show_export_import:
+        render_export_import(store=store, game_id=game_id)
+
+    if not show_snapshot_history:
+        return
 
     # Snapshot view + drift chart
     st.markdown("### Snapshot history")
