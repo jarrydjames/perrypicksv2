@@ -126,6 +126,10 @@ def init_state():
     st.session_state.setdefault("use_clock_shrink", True)
 
 
+def _mark_user_set(key: str) -> None:
+    st.session_state[f"_pp_user_set:{key}"] = True
+
+
 def _maybe_apply_pending_odds_autofill() -> None:
     """Apply any pending odds autofill payload into widget session_state.
 
@@ -143,7 +147,24 @@ def _maybe_apply_pending_odds_autofill() -> None:
     def set_if_empty(key: str, value) -> None:
         if value is None:
             return
+
         cur = st.session_state.get(key)
+        user_set = bool(st.session_state.get(f"_pp_user_set:{key}", False))
+
+        # Some fields have UX placeholders (e.g. -110). If the user never touched the field,
+        # we consider that placeholder "empty" and allow autofill to overwrite it.
+        PLACEHOLDER_VALUES = {
+            "odds_over": "-110",
+            "odds_under": "-110",
+            "odds_home": "-110",
+            "odds_away": "-110",
+        }
+
+        if not user_set and key in PLACEHOLDER_VALUES:
+            if str(cur).strip() == str(PLACEHOLDER_VALUES[key]).strip():
+                st.session_state[key] = value
+                return
+
         # treat 0.0 as empty for number inputs
         if cur in (None, ""):
             st.session_state[key] = value
@@ -288,8 +309,20 @@ with st.container():
             help="Enter 0 to ignore",
             key="total_line",
         )
-        odds_over = st.text_input("Over odds", value=str(st.session_state.get("odds_over", "-110")), key="odds_over")
-        odds_under = st.text_input("Under odds", value=str(st.session_state.get("odds_under", "-110")), key="odds_under")
+        odds_over = st.text_input(
+            "Over odds",
+            value=str(st.session_state.get("odds_over", "-110")),
+            key="odds_over",
+            on_change=_mark_user_set,
+            args=("odds_over",),
+        )
+        odds_under = st.text_input(
+            "Under odds",
+            value=str(st.session_state.get("odds_under", "-110")),
+            key="odds_under",
+            on_change=_mark_user_set,
+            args=("odds_under",),
+        )
 
         st.write("")
         st.markdown("**Home spread (home - away)**")
@@ -300,8 +333,20 @@ with st.container():
             help="Example: -3.5 means home is -3.5",
             key="spread_line_home",
         )
-        odds_home = st.text_input(f"{ui_home} spread odds", value=str(st.session_state.get("odds_home", "-110")), key="odds_home")
-        odds_away = st.text_input(f"{ui_away} spread odds", value=str(st.session_state.get("odds_away", "-110")), key="odds_away")
+        odds_home = st.text_input(
+            f"{ui_home} spread odds",
+            value=str(st.session_state.get("odds_home", "-110")),
+            key="odds_home",
+            on_change=_mark_user_set,
+            args=("odds_home",),
+        )
+        odds_away = st.text_input(
+            f"{ui_away} spread odds",
+            value=str(st.session_state.get("odds_away", "-110")),
+            key="odds_away",
+            on_change=_mark_user_set,
+            args=("odds_away",),
+        )
 
     with b2:
         st.markdown("**Sizing**")
@@ -334,11 +379,15 @@ with st.container():
                 f"{ui_home} moneyline odds",
                 value=str(st.session_state.get("moneyline_home", "")),
                 key="moneyline_home",
+                on_change=_mark_user_set,
+                args=("moneyline_home",),
             )
             moneyline_away = st.text_input(
                 f"{ui_away} moneyline odds",
                 value=str(st.session_state.get("moneyline_away", "")),
                 key="moneyline_away",
+                on_change=_mark_user_set,
+                args=("moneyline_away",),
             )
 
             st.write("")
@@ -353,11 +402,15 @@ with st.container():
                 f"{ui_home} TT over odds",
                 value=str(st.session_state.get("odds_team_over_home", "")),
                 key="odds_team_over_home",
+                on_change=_mark_user_set,
+                args=("odds_team_over_home",),
             )
             odds_team_under_home = st.text_input(
                 f"{ui_home} TT under odds",
                 value=str(st.session_state.get("odds_team_under_home", "")),
                 key="odds_team_under_home",
+                on_change=_mark_user_set,
+                args=("odds_team_under_home",),
             )
 
             st.write("")
@@ -371,11 +424,15 @@ with st.container():
                 f"{ui_away} TT over odds",
                 value=str(st.session_state.get("odds_team_over_away", "")),
                 key="odds_team_over_away",
+                on_change=_mark_user_set,
+                args=("odds_team_over_away",),
             )
             odds_team_under_away = st.text_input(
                 f"{ui_away} TT under odds",
                 value=str(st.session_state.get("odds_team_under_away", "")),
                 key="odds_team_under_away",
+                on_change=_mark_user_set,
+                args=("odds_team_under_away",),
             )
 
     st.markdown('<div class="pp-muted">Tip: Track a bet to record how your probability/edge moves through the 2nd half.</div>', unsafe_allow_html=True)
