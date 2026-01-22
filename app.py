@@ -239,34 +239,53 @@ init_state()
 # -----------------------------
 # Header
 # -----------------------------
-def _render_logo() -> None:
-    import os
+import os
 
-    local_path = os.path.join("assets", "logo.png")
-    if os.path.exists(local_path):
-        st.image(local_path, width=180)
-        return
-
-    try:
-        logo_url = st.secrets.get("LOGO_URL")
-    except Exception:
-        logo_url = None
-
-    if logo_url:
-        st.image(str(logo_url), width=180)
-
-
-_render_logo()
+logo_path = os.path.join("assets", "logo.png")
+logo_url = None
+try:
+    logo_url = st.secrets.get("LOGO_URL")
+except Exception:
+    logo_url = None
 
 st.markdown(
     """
-    <div class="pp-card">
-      <div class="pp-title">PerryPicks 🐶</div>
-      <div class="pp-sub">Paste an NBA game URL or GAME_ID. Add lines/odds. Get a projection + value bets + tracking.</div>
-    </div>
+    <style>
+      .pp-header-text { text-align: center; }
+    </style>
     """,
     unsafe_allow_html=True,
 )
+
+st.markdown('<div class="pp-card">', unsafe_allow_html=True)
+
+lcol, ccol, rcol = st.columns([1.2, 6.0, 1.2], vertical_alignment="center")
+
+with lcol:
+    if os.path.exists(logo_path):
+        st.image(logo_path, width=72)
+    elif logo_url:
+        st.image(str(logo_url), width=72)
+
+with ccol:
+    st.markdown(
+        """
+        <div class="pp-header-text">
+          <div class="pp-title">PerryPicks 🐶</div>
+          <div class="pp-sub">Paste an NBA game URL or GAME_ID. Add lines/odds. Get a projection + value bets + tracking.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with rcol:
+    if os.path.exists(logo_path):
+        st.image(logo_path, width=72)
+    elif logo_url:
+        st.image(str(logo_url), width=72)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
 st.write("")
 
 # -----------------------------
