@@ -528,7 +528,20 @@ if manual_refresh:
             home_name = str(p.get("home_name") or "").strip()
             away_name = str(p.get("away_name") or "").strip()
 
-            snap = get_cached_nba_odds(home_name=home_name, away_name=away_name, preferred_book="draftkings", ttl_seconds=120)
+            enable_team_totals = False
+            try:
+                # Free plan doesn’t support team_totals; keep this off unless you upgrade.
+                enable_team_totals = bool(st.secrets.get("ODDS_API_ENABLE_TEAM_TOTALS", False))
+            except Exception:
+                enable_team_totals = False
+
+            snap = get_cached_nba_odds(
+                home_name=home_name,
+                away_name=away_name,
+                preferred_book="draftkings",
+                include_team_totals=enable_team_totals,
+                ttl_seconds=120,
+            )
 
             st.session_state["_pp_autofill_odds"] = {
                 "total_line": snap.total_points,
@@ -549,7 +562,10 @@ if manual_refresh:
                     f"Auto-filled odds from Odds API ({snap.bookmaker or 'draftkings'})."
                     + (
                         " Team totals not available via your Odds API endpoint/plan."
-                        if (snap.team_total_home is None and snap.team_total_away is None)
+                        if (
+                            enable_team_totals
+                            and (snap.team_total_home is None and snap.team_total_away is None)
+                        )
                         else ""
                     )
                 ),
