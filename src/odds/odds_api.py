@@ -12,7 +12,7 @@ ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
 @dataclass(frozen=True)
 class OddsAPIMarketSnapshot:
-    # Main markets
+    # Main markets (full game)
     total_points: Optional[float]
     total_over_odds: Optional[int]
     total_under_odds: Optional[int]
@@ -24,7 +24,7 @@ class OddsAPIMarketSnapshot:
     moneyline_home: Optional[int]
     moneyline_away: Optional[int]
 
-    # Optional team totals (may not be available for all books / leagues)
+    # Team totals (if supported by book/plan)
     team_total_home: Optional[float]
     team_total_home_over_odds: Optional[int]
     team_total_home_under_odds: Optional[int]
@@ -76,7 +76,7 @@ def fetch_nba_odds_snapshot(
     home_name: str,
     away_name: str,
     regions: str = "us",
-    markets: str = "h2h,spreads,totals",
+    markets: str = "h2h,spreads,totals,team_totals",
     odds_format: str = "american",
     date_format: str = "iso",
     preferred_book: Optional[str] = None,
@@ -88,8 +88,11 @@ def fetch_nba_odds_snapshot(
     - One endpoint call.
     - We pick ONE bookmaker (either preferred_book or the first available) to avoid mixing books.
 
-    NOTE: Team totals are not included here because Odds API exposes them under different
-    markets depending on plan/book. If you upgrade later, we can add those.
+    Team totals:
+    - If available, we parse market key `team_totals` where each outcome usually has:
+      - name: Over/Under
+      - description: team name
+      - point: team total line
     """
 
     key = get_api_key()
@@ -174,6 +177,14 @@ def fetch_nba_odds_snapshot(
     ml_home = None
     ml_away = None
 
+    team_total_home = None
+    team_total_home_over_odds = None
+    team_total_home_under_odds = None
+
+    team_total_away = None
+    team_total_away_over_odds = None
+    team_total_away_under_odds = None
+
     for m in chosen.get("markets") or []:
         mk = str(m.get("key") or "")
 
@@ -214,6 +225,38 @@ def fetch_nba_odds_snapshot(
                     elif name.strip().lower() == away_name.strip().lower():
                         spread_away_odds = price
 
+        elif mk == "team_totals":
+            # outcomes: Over/Under, but team is in `description`
+            for o in m.get("outcomes") or []:
+                side = str(o.get("name") or "").strip().lower()  # over/under
+                team = str(o.get("description") or "").strip()
+                point = o.get("point")
+                price = _american_from_price(o.get("price"))
+                if point is None or not team:
+                    continue
+
+                def is_home_team(t: str) -> bool:
+                    return t.strip().lower() == home_name.strip().lower()
+
+                def is_away_team(t: str) -> bool:
+                    return t.strip().lower() == away_name.strip().lower()
+
+                # If API home/away swapped relative to our names, that doesn't matter here,
+                # because we're matching by actual team names.
+                if is_home_team(team):
+                    team_total_home = float(point)
+                    if side == "over":
+                        team_total_home_over_odds = price
+                    elif side == "under":
+                        team_total_home_under_odds = price
+
+                elif is_away_team(team):
+                    team_total_away = float(point)
+                    if side == "over":
+                        team_total_away_over_odds = price
+                    elif side == "under":
+                        team_total_away_under_odds = price
+
         elif mk == "h2h":
             for o in m.get("outcomes") or []:
                 name = str(o.get("name") or "")
@@ -238,12 +281,12 @@ def fetch_nba_odds_snapshot(
         spread_away_odds=spread_away_odds,
         moneyline_home=ml_home,
         moneyline_away=ml_away,
-        team_total_home=None,
-        team_total_home_over_odds=None,
-        team_total_home_under_odds=None,
-        team_total_away=None,
-        team_total_away_over_odds=None,
-        team_total_away_under_odds=None,
+        team_total_home=team_total_home,
+        team_total_home_over_odds=team_total_home_over_odds,
+        team_total_home_under_odds=team_total_home_under_odds,
+        team_total_away=team_total_away,
+        team_total_away_over_odds=team_total_away_over_odds,
+        team_total_away_under_odds=team_total_away_under_odds,
         bookmaker=book_key,
         last_update=last_update,
     )

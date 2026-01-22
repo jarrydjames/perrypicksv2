@@ -164,6 +164,15 @@ def _maybe_apply_pending_odds_autofill() -> None:
     set_if_empty("moneyline_home", payload.get("moneyline_home"))
     set_if_empty("moneyline_away", payload.get("moneyline_away"))
 
+    # team totals
+    set_if_empty("team_total_home", payload.get("team_total_home"))
+    set_if_empty("odds_team_over_home", payload.get("odds_team_over_home"))
+    set_if_empty("odds_team_under_home", payload.get("odds_team_under_home"))
+
+    set_if_empty("team_total_away", payload.get("team_total_away"))
+    set_if_empty("odds_team_over_away", payload.get("odds_team_over_away"))
+    set_if_empty("odds_team_under_away", payload.get("odds_team_under_away"))
+
     st.session_state["_pp_odds_status"] = payload.get("status")
 
 
@@ -462,7 +471,7 @@ if manual_refresh:
             home_name = str(p.get("home_name") or "").strip()
             away_name = str(p.get("away_name") or "").strip()
 
-            snap = get_cached_nba_odds(home_name=home_name, away_name=away_name, preferred_book=None, ttl_seconds=120)
+            snap = get_cached_nba_odds(home_name=home_name, away_name=away_name, preferred_book="draftkings", ttl_seconds=120)
 
             st.session_state["_pp_autofill_odds"] = {
                 "total_line": snap.total_points,
@@ -473,7 +482,13 @@ if manual_refresh:
                 "odds_away": str(snap.spread_away_odds) if snap.spread_away_odds is not None else None,
                 "moneyline_home": str(snap.moneyline_home) if snap.moneyline_home is not None else None,
                 "moneyline_away": str(snap.moneyline_away) if snap.moneyline_away is not None else None,
-                "status": f"Auto-filled odds from Odds API ({snap.bookmaker or 'book'}).",
+                "team_total_home": snap.team_total_home,
+                "odds_team_over_home": str(snap.team_total_home_over_odds) if snap.team_total_home_over_odds is not None else None,
+                "odds_team_under_home": str(snap.team_total_home_under_odds) if snap.team_total_home_under_odds is not None else None,
+                "team_total_away": snap.team_total_away,
+                "odds_team_over_away": str(snap.team_total_away_over_odds) if snap.team_total_away_over_odds is not None else None,
+                "odds_team_under_away": str(snap.team_total_away_under_odds) if snap.team_total_away_under_odds is not None else None,
+                "status": f"Auto-filled odds from Odds API ({snap.bookmaker or 'draftkings'}).",
             }
         except OddsAPIError as e:
             st.session_state["_pp_autofill_odds"] = {"status": f"Odds auto-fill failed: {e}"}
