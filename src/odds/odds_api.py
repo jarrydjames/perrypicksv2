@@ -233,6 +233,13 @@ def fetch_nba_odds_snapshot(
     team_total_away_over_odds = None
     team_total_away_under_odds = None
 
+    def _is_same_team(name_a: str, name_b: str) -> bool:
+        a = _norm(name_a)
+        b = _norm(name_b)
+        if not a or not b:
+            return False
+        return a == b or a in b or b in a
+
     for m in chosen.get("markets") or []:
         mk = str(m.get("key") or "")
 
@@ -258,20 +265,11 @@ def fetch_nba_odds_snapshot(
                 if point is None:
                     continue
 
-                if swapped:
-                    # API home/away is reversed vs our home_name/away_name
-                    if name.strip().lower() == away_name.strip().lower():
-                        # our home team
-                        spread_home = float(point)
-                        spread_home_odds = price
-                    elif name.strip().lower() == home_name.strip().lower():
-                        spread_away_odds = price
-                else:
-                    if name.strip().lower() == home_name.strip().lower():
-                        spread_home = float(point)
-                        spread_home_odds = price
-                    elif name.strip().lower() == away_name.strip().lower():
-                        spread_away_odds = price
+                if _is_same_team(name, home_name):
+                    spread_home = float(point)
+                    spread_home_odds = price
+                elif _is_same_team(name, away_name):
+                    spread_away_odds = price
 
         elif mk == "team_totals":
             # outcomes: Over/Under, but team is in `description`
@@ -283,22 +281,16 @@ def fetch_nba_odds_snapshot(
                 if point is None or not team:
                     continue
 
-                def is_home_team(t: str) -> bool:
-                    return t.strip().lower() == home_name.strip().lower()
-
-                def is_away_team(t: str) -> bool:
-                    return t.strip().lower() == away_name.strip().lower()
-
                 # If API home/away swapped relative to our names, that doesn't matter here,
                 # because we're matching by actual team names.
-                if is_home_team(team):
+                if _is_same_team(team, home_name):
                     team_total_home = float(point)
                     if side == "over":
                         team_total_home_over_odds = price
                     elif side == "under":
                         team_total_home_under_odds = price
 
-                elif is_away_team(team):
+                elif _is_same_team(team, away_name):
                     team_total_away = float(point)
                     if side == "over":
                         team_total_away_over_odds = price
@@ -309,16 +301,11 @@ def fetch_nba_odds_snapshot(
             for o in m.get("outcomes") or []:
                 name = str(o.get("name") or "")
                 price = _american_from_price(o.get("price"))
-                if swapped:
-                    if name.strip().lower() == away_name.strip().lower():
-                        ml_home = price
-                    elif name.strip().lower() == home_name.strip().lower():
-                        ml_away = price
-                else:
-                    if name.strip().lower() == home_name.strip().lower():
-                        ml_home = price
-                    elif name.strip().lower() == away_name.strip().lower():
-                        ml_away = price
+
+                if _is_same_team(name, home_name):
+                    ml_home = price
+                elif _is_same_team(name, away_name):
+                    ml_away = price
 
     return OddsAPIMarketSnapshot(
         total_points=total_points,

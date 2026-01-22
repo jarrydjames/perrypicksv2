@@ -125,6 +125,26 @@ def init_state():
     st.session_state.setdefault("refresh_mins", 3)
     st.session_state.setdefault("use_clock_shrink", True)
 
+    # Betting widget defaults (single source of truth = st.session_state)
+    st.session_state.setdefault("total_line", 0.0)
+    st.session_state.setdefault("odds_over", "-110")
+    st.session_state.setdefault("odds_under", "-110")
+
+    st.session_state.setdefault("spread_line_home", 0.0)
+    st.session_state.setdefault("odds_home", "-110")
+    st.session_state.setdefault("odds_away", "-110")
+
+    st.session_state.setdefault("moneyline_home", "")
+    st.session_state.setdefault("moneyline_away", "")
+
+    st.session_state.setdefault("team_total_home", 0.0)
+    st.session_state.setdefault("odds_team_over_home", "")
+    st.session_state.setdefault("odds_team_under_home", "")
+
+    st.session_state.setdefault("team_total_away", 0.0)
+    st.session_state.setdefault("odds_team_over_away", "")
+    st.session_state.setdefault("odds_team_under_away", "")
+
 
 def _mark_user_set(key: str) -> None:
     st.session_state[f"_pp_user_set:{key}"] = True
@@ -304,21 +324,18 @@ with st.container():
         st.markdown("**Game total (O/U)**")
         total_line = st.number_input(
             "Total line",
-            value=float(st.session_state.get("total_line", 0.0)),
             step=0.5,
             help="Enter 0 to ignore",
             key="total_line",
         )
         odds_over = st.text_input(
             "Over odds",
-            value=str(st.session_state.get("odds_over", "-110")),
             key="odds_over",
             on_change=_mark_user_set,
             args=("odds_over",),
         )
         odds_under = st.text_input(
             "Under odds",
-            value=str(st.session_state.get("odds_under", "-110")),
             key="odds_under",
             on_change=_mark_user_set,
             args=("odds_under",),
@@ -328,21 +345,18 @@ with st.container():
         st.markdown("**Home spread (home - away)**")
         spread_line_home = st.number_input(
             "Spread line",
-            value=float(st.session_state.get("spread_line_home", 0.0)),
             step=0.5,
             help="Example: -3.5 means home is -3.5",
             key="spread_line_home",
         )
         odds_home = st.text_input(
             f"{ui_home} spread odds",
-            value=str(st.session_state.get("odds_home", "-110")),
             key="odds_home",
             on_change=_mark_user_set,
             args=("odds_home",),
         )
         odds_away = st.text_input(
             f"{ui_away} spread odds",
-            value=str(st.session_state.get("odds_away", "-110")),
             key="odds_away",
             on_change=_mark_user_set,
             args=("odds_away",),
@@ -377,14 +391,12 @@ with st.container():
         with st.expander("Moneyline + Team totals", expanded=False):
             moneyline_home = st.text_input(
                 f"{ui_home} moneyline odds",
-                value=str(st.session_state.get("moneyline_home", "")),
                 key="moneyline_home",
                 on_change=_mark_user_set,
                 args=("moneyline_home",),
             )
             moneyline_away = st.text_input(
                 f"{ui_away} moneyline odds",
-                value=str(st.session_state.get("moneyline_away", "")),
                 key="moneyline_away",
                 on_change=_mark_user_set,
                 args=("moneyline_away",),
@@ -394,20 +406,17 @@ with st.container():
             st.markdown("**Team totals**")
             team_total_home = st.number_input(
                 f"{ui_home} team total line",
-                value=float(st.session_state.get("team_total_home", 0.0)),
                 step=0.5,
                 key="team_total_home",
             )
             odds_team_over_home = st.text_input(
                 f"{ui_home} TT over odds",
-                value=str(st.session_state.get("odds_team_over_home", "")),
                 key="odds_team_over_home",
                 on_change=_mark_user_set,
                 args=("odds_team_over_home",),
             )
             odds_team_under_home = st.text_input(
                 f"{ui_home} TT under odds",
-                value=str(st.session_state.get("odds_team_under_home", "")),
                 key="odds_team_under_home",
                 on_change=_mark_user_set,
                 args=("odds_team_under_home",),
@@ -416,20 +425,17 @@ with st.container():
             st.write("")
             team_total_away = st.number_input(
                 f"{ui_away} team total line",
-                value=float(st.session_state.get("team_total_away", 0.0)),
                 step=0.5,
                 key="team_total_away",
             )
             odds_team_over_away = st.text_input(
                 f"{ui_away} TT over odds",
-                value=str(st.session_state.get("odds_team_over_away", "")),
                 key="odds_team_over_away",
                 on_change=_mark_user_set,
                 args=("odds_team_over_away",),
             )
             odds_team_under_away = st.text_input(
                 f"{ui_away} TT under odds",
-                value=str(st.session_state.get("odds_team_under_away", "")),
                 key="odds_team_under_away",
                 on_change=_mark_user_set,
                 args=("odds_team_under_away",),
