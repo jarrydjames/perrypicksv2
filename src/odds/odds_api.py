@@ -136,40 +136,66 @@ def fetch_nba_odds_snapshot(
     if not isinstance(events, list):
         raise OddsAPIError("Odds API response not a list")
 
-    # Match by team names (case-insensitive)
-    hn = home_name.strip().lower()
-    an = away_name.strip().lower()
+    def _norm(s: str) -> str:
+        return " ".join(
+            "".join(ch.lower() if ch.isalnum() or ch.isspace() else " " for ch in s).split()
+        )
 
-    match: Optional[Dict[str, Any]] = None
+    hn = _norm(home_name)
+    an = _norm(away_name)
+
+    def _team_score(want: str, got: str) -> float:
+        if not want or not got:
+            return 0.0
+        if want == got:
+            return 10.0
+        if want in got or got in want:
+            return 8.0
+        want_tokens = set(want.split())
+        got_tokens = set(got.split())
+        if not want_tokens or not got_tokens:
+            return 0.0
+        overlap = len(want_tokens & got_tokens)
+        return 3.0 * (overlap / max(len(want_tokens), len(got_tokens)))
+
+    best = None
+    best_swapped = False
+    best_score = 0.0
+
     for ev in events:
         try:
-            h = str(ev.get("home_team", "")).strip().lower()
-            a = str(ev.get("away_team", "")).strip().lower()
-            if h == hn and a == an:
-                match = ev
-                break
+            h = _norm(str(ev.get("home_team", "")))
+            a = _norm(str(ev.get("away_team", "")))
+
+            score_normal = _team_score(hn, h) + _team_score(an, a)
+            score_swapped = _team_score(hn, a) + _team_score(an, h)
+
+            if score_normal > best_score:
+                best = ev
+                best_swapped = False
+                best_score = score_normal
+            if score_swapped > best_score:
+                best = ev
+                best_swapped = True
+                best_score = score_swapped
         except Exception:
             continue
 
-    if match is None:
-        # Fallback: sometimes Odds API flips labels; handle either orientation
-        for ev in events:
+    # Threshold: require at least some similarity on both teams.
+    if best is None or best_score < 6.0:
+        sample = []
+        for ev in events[:8]:
             try:
-                h = str(ev.get("home_team", "")).strip().lower()
-                a = str(ev.get("away_team", "")).strip().lower()
-                if h == an and a == hn:
-                    match = ev
-                    # swap later when parsing
-                    break
+                sample.append(f"{ev.get('away_team','?')} @ {ev.get('home_team','?')}")
             except Exception:
                 continue
+        raise OddsAPIError(
+            f"No odds match found for {away_name} @ {home_name}. "
+            f"Sample available games: {', '.join(sample)}"
+        )
 
-    if match is None:
-        raise OddsAPIError(f"No odds match found for {away_name} @ {home_name}")
-
-    home_team_api = str(match.get("home_team", ""))
-    away_team_api = str(match.get("away_team", ""))
-    swapped = home_team_api.strip().lower() != hn
+    match = best
+    swapped = best_swapped
 
     bookmakers = match.get("bookmakers") or []
     if not bookmakers:
