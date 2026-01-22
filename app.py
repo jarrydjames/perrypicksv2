@@ -19,6 +19,8 @@ from src.ui.recs import render_recommendations
 from src.ui.calibration import render_calibration_report
 from src.ui.styles import apply_base_styles
 from src.ui.tracking import SnapshotThrottle, get_store, maybe_record_snapshot, render_tracking_panel
+from src.odds.streamlit_cache import get_cached_nba_odds
+from src.odds.odds_api import OddsAPIError
 from src.ui.log_monitor import render_log_monitor
 
 # -----------------------------
@@ -124,6 +126,47 @@ def init_state():
     st.session_state.setdefault("use_clock_shrink", True)
 
 
+def _maybe_apply_pending_odds_autofill() -> None:
+    """Apply any pending odds autofill payload into widget session_state.
+
+    Must run BEFORE widgets are created.
+
+    Rules:
+    - Only fill fields that are blank/0.
+    - Never overwrite non-empty user-entered values.
+    """
+
+    payload = st.session_state.pop("_pp_autofill_odds", None)
+    if not payload:
+        return
+
+    def set_if_empty(key: str, value) -> None:
+        if value is None:
+            return
+        cur = st.session_state.get(key)
+        # treat 0.0 as empty for number inputs
+        if cur in (None, ""):
+            st.session_state[key] = value
+        elif isinstance(cur, (int, float)) and float(cur) == 0.0:
+            st.session_state[key] = value
+
+    # totals
+    set_if_empty("total_line", payload.get("total_line"))
+    set_if_empty("odds_over", payload.get("odds_over"))
+    set_if_empty("odds_under", payload.get("odds_under"))
+
+    # spread
+    set_if_empty("spread_line_home", payload.get("spread_line_home"))
+    set_if_empty("odds_home", payload.get("odds_home"))
+    set_if_empty("odds_away", payload.get("odds_away"))
+
+    # moneyline
+    set_if_empty("moneyline_home", payload.get("moneyline_home"))
+    set_if_empty("moneyline_away", payload.get("moneyline_away"))
+
+    st.session_state["_pp_odds_status"] = payload.get("status")
+
+
 def team_labels_for_ui(current_game_id: str | None) -> tuple[str, str]:
     """Return (home_label, away_label) for UI.
 
@@ -208,6 +251,9 @@ st.write("")
 _gid_hint = extract_gid_safe(st.session_state.get("game_input", ""))
 ui_home, ui_away = team_labels_for_ui(_gid_hint)
 
+# Apply any pending odds autofill BEFORE widgets are created.
+_maybe_apply_pending_odds_autofill()
+
 # -----------------------------
 # Betting Inputs (directly under URL area)
 # -----------------------------
@@ -215,24 +261,38 @@ with st.container():
     st.markdown('<div class="pp-card">', unsafe_allow_html=True)
     st.subheader("Market lines (optional)")
 
+    odds_status = st.session_state.get("_pp_odds_status")
+    if odds_status:
+        if str(odds_status).lower().startswith("odds auto-fill failed"):
+            st.warning(str(odds_status))
+        else:
+            st.caption(str(odds_status))
+
     b1, b2 = st.columns(2)
 
     with b1:
         st.markdown("**Game total (O/U)**")
-        total_line = st.number_input("Total line", value=0.0, step=0.5, help="Enter 0 to ignore")
-        odds_over = st.text_input("Over odds", value="-110")
-        odds_under = st.text_input("Under odds", value="-110")
+        total_line = st.number_input(
+            "Total line",
+            value=float(st.session_state.get("total_line", 0.0)),
+            step=0.5,
+            help="Enter 0 to ignore",
+            key="total_line",
+        )
+        odds_over = st.text_input("Over odds", value=str(st.session_state.get("odds_over", "-110")), key="odds_over")
+        odds_under = st.text_input("Under odds", value=str(st.session_state.get("odds_under", "-110")), key="odds_under")
 
         st.write("")
         st.markdown("**Home spread (home - away)**")
         spread_line_home = st.number_input(
             "Spread line",
-            value=0.0,
+            value=float(st.session_state.get("spread_line_home", 0.0)),
             step=0.5,
             help="Example: -3.5 means home is -3.5",
+            key="spread_line_home",
         )
-        odds_home = st.text_input(f"{ui_home} spread odds", value="-110", key="odds_home")
-        odds_away = st.text_input(f"{ui_away} spread odds", value="-110", key="odds_away")
+        odds_home = st.text_input(f"{ui_home} spread odds", value=str(st.session_state.get("odds_home", "-110")), key="odds_home")
+        odds_away = st.text_input(f"{ui_away} spread odds", value=str(st.session_state.get("odds_away", "-110")), key="odds_away")
 
     with b2:
         st.markdown("**Sizing**")
@@ -261,19 +321,53 @@ with st.container():
         )
 
         with st.expander("Moneyline + Team totals", expanded=False):
-            moneyline_home = st.text_input(f"{ui_home} moneyline odds", value="", key="moneyline_home")
-            moneyline_away = st.text_input(f"{ui_away} moneyline odds", value="", key="moneyline_away")
+            moneyline_home = st.text_input(
+                f"{ui_home} moneyline odds",
+                value=str(st.session_state.get("moneyline_home", "")),
+                key="moneyline_home",
+            )
+            moneyline_away = st.text_input(
+                f"{ui_away} moneyline odds",
+                value=str(st.session_state.get("moneyline_away", "")),
+                key="moneyline_away",
+            )
 
             st.write("")
             st.markdown("**Team totals**")
-            team_total_home = st.number_input(f"{ui_home} team total line", value=0.0, step=0.5, key="team_total_home")
-            odds_team_over_home = st.text_input(f"{ui_home} TT over odds", value="", key="odds_team_over_home")
-            odds_team_under_home = st.text_input(f"{ui_home} TT under odds", value="", key="odds_team_under_home")
+            team_total_home = st.number_input(
+                f"{ui_home} team total line",
+                value=float(st.session_state.get("team_total_home", 0.0)),
+                step=0.5,
+                key="team_total_home",
+            )
+            odds_team_over_home = st.text_input(
+                f"{ui_home} TT over odds",
+                value=str(st.session_state.get("odds_team_over_home", "")),
+                key="odds_team_over_home",
+            )
+            odds_team_under_home = st.text_input(
+                f"{ui_home} TT under odds",
+                value=str(st.session_state.get("odds_team_under_home", "")),
+                key="odds_team_under_home",
+            )
 
             st.write("")
-            team_total_away = st.number_input(f"{ui_away} team total line", value=0.0, step=0.5, key="team_total_away")
-            odds_team_over_away = st.text_input(f"{ui_away} TT over odds", value="", key="odds_team_over_away")
-            odds_team_under_away = st.text_input(f"{ui_away} TT under odds", value="", key="odds_team_under_away")
+            team_total_away = st.number_input(
+                f"{ui_away} team total line",
+                value=float(st.session_state.get("team_total_away", 0.0)),
+                step=0.5,
+                key="team_total_away",
+            )
+            odds_team_over_away = st.text_input(
+                f"{ui_away} TT over odds",
+                value=str(st.session_state.get("odds_team_over_away", "")),
+                key="odds_team_over_away",
+            )
+            odds_team_under_away = st.text_input(
+                f"{ui_away} TT under odds",
+                value=str(st.session_state.get("odds_team_under_away", "")),
+                key="odds_team_under_away",
+            )
 
     st.markdown('<div class="pp-muted">Tip: Track a bet to record how your probability/edge moves through the 2nd half.</div>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -357,6 +451,37 @@ if manual_refresh or st.session_state.last_pred is None:
     except Exception as e:
         st.error(f"Prediction failed: {repr(e)}")
         st.stop()
+
+# If user explicitly clicked refresh, attempt a cheap odds autofill.
+# We fetch AFTER prediction so we know the matchup teams.
+if manual_refresh:
+    once_key = f"_pp_odds_autofill_rerun:{gid}:{st.session_state.get('last_pred', {}).get('status', {}).get('gameClock')}"
+    if not st.session_state.get(once_key):
+        try:
+            p = st.session_state.last_pred or {}
+            home_name = str(p.get("home_name") or "").strip()
+            away_name = str(p.get("away_name") or "").strip()
+
+            snap = get_cached_nba_odds(home_name=home_name, away_name=away_name, preferred_book=None, ttl_seconds=120)
+
+            st.session_state["_pp_autofill_odds"] = {
+                "total_line": snap.total_points,
+                "odds_over": str(snap.total_over_odds) if snap.total_over_odds is not None else None,
+                "odds_under": str(snap.total_under_odds) if snap.total_under_odds is not None else None,
+                "spread_line_home": snap.spread_home,
+                "odds_home": str(snap.spread_home_odds) if snap.spread_home_odds is not None else None,
+                "odds_away": str(snap.spread_away_odds) if snap.spread_away_odds is not None else None,
+                "moneyline_home": str(snap.moneyline_home) if snap.moneyline_home is not None else None,
+                "moneyline_away": str(snap.moneyline_away) if snap.moneyline_away is not None else None,
+                "status": f"Auto-filled odds from Odds API ({snap.bookmaker or 'book'}).",
+            }
+        except OddsAPIError as e:
+            st.session_state["_pp_autofill_odds"] = {"status": f"Odds auto-fill failed: {e}"}
+        except Exception as e:
+            st.session_state["_pp_autofill_odds"] = {"status": f"Odds auto-fill failed (unexpected): {repr(e)}"}
+
+        st.session_state[once_key] = True
+        st.rerun()
 
 pred = st.session_state.last_pred
 
