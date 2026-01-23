@@ -1,0 +1,465 @@
+PERRYPICKS — SYSTEM SUMMARY (for external review)
+Generated: 2026-01-23
+Repo: perrypicks (Streamlit app + training/backtesting utilities)
+
+
+0) TL;DR (purpose)
+PerryPicks is a halftime decision-support tool for NBA betting.
+
+At a single point in time (primarily halftime), it:
+- Pulls live game context from NBA’s public CDN endpoints.
+- Builds a small set of halftime features (score + play-by-play behavior counts + efficiency/pace rates).
+- Runs compact ML models to predict second-half outcomes:
+  - 2H total points
+  - 2H margin (home - away)
+- Converts those into full-game projections (final score, total, margin).
+- Quantifies uncertainty with an approximate 80% prediction interval (PI80).
+- Evaluates common betting markets (total, spread, moneyline, team totals) using Normal assumptions.
+- Computes “edge” vs break-even, expected value per $100 stake, and Kelly sizing suggestions.
+
+Optionally, it can auto-fill market lines/odds from The Odds API.
+
+PerryPicks is built to run on Streamlit Cloud with minimal runtime dependencies (sklearn-first, no heavy GPU libs).
+
+
+1) Intended user workflow (decision methodology)
+The product is centered on a simple, repeatable workflow:
+
+1) Identify a live NBA game (user pastes NBA game URL or GAME_ID).
+2) At halftime (or later), fetch game state + first-half events.
+3) Produce a “neutral” probabilistic projection for the remainder of the game.
+4) Compare projection vs market lines to compute:
+   - P(hit) for each market side
+   - break-even probability from odds
+   - edge = P(hit) - break-even
+   - expected profit per $100 stake
+   - recommended bankroll fraction via fractional Kelly
+5) Apply a “bet policy” (Conservative/Standard/Aggressive) that gates recommendations.
+6) If the user chooses to track a bet, store the bet and periodic snapshots so probability drift can be reviewed.
+
+Key philosophy:
+- The tool is not “pick a bet every game.” It is explicitly designed to PASS often.
+- The “edge gate” is a first-class part of the UX (policy-based).
+
+
+2) Runtime architecture (how the app is wired)
+Main modules:
+
+- UI: app.py (Streamlit)
+- Prediction entrypoint: src/predict_api.py::predict_game()
+- Production predictor: src/predict_from_gameid_v3_runtime.py::predict_from_game_id()
+- Market evaluation: src/domain/markets.py::evaluate_markets()
+- Bet probability helper (for snapshots): src/domain/bet_probability.py
+- Policy gating: src/domain/bet_policy.py
+- Odds autofill (The Odds API): src/odds/odds_api.py
+- Persistent tracking store (SQLite): src/storage/sqlite_store.py + src/ui/tracking.py
+
+High-level call chain:
+
+app.py
+  -> predict_game(game_input)
+       -> predict_from_game_id(game_input)
+            -> NBA CDN fetch (boxscore + play-by-play)
+            -> feature build (halftime)
+            -> model inference (2 heads)
+            -> construct means + intervals
+  -> evaluate_markets(pred, inputs, policy)
+       -> Normal-based P(hit)
+       -> break-even from American odds
+       -> edge/EV/Kelly
+       -> apply_policy gates recommendations
+
+
+3) Data sources and integration
+3.1 NBA live data (public CDN)
+The predictor fetches JSON from NBA CDN endpoints via the code in src/predict_from_gameid_v2.py (used by runtime predictor):
+- Boxscore endpoint:
+  https://cdn.nba.com/static/json/liveData/boxscore/boxscore_{GAME_ID}.json
+- Play-by-play endpoint:
+  https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_{GAME_ID}.json
+
+The runtime predictor extracts:
+- Team identity strings (name/city/tricode) for display and matching.
+- Game status metadata if available:
+  gameStatus, gameStatusText, period, gameClock, gameTimeUTC
+- Team-level statistics blocks from boxscore used for rate features.
+
+Important note:
+- NBA CDN shapes can change; the code uses defensive access patterns and fallbacks.
+
+3.2 Sportsbook market data (The Odds API)
+Optional odds autofill calls The Odds API v4:
+  https://api.the-odds-api.com/v4/sports/basketball_nba/odds
+
+Markets requested (when available):
+- totals
+- spreads
+- h2h (moneyline)
+- team_totals
+
+Implementation choices:
+- The code selects ONE bookmaker per call (to avoid mixing books).
+- It does fuzzy team-name matching (substring/token overlap) because The Odds API often returns full team names.
+- It has a fail-soft fallback: if team_totals are unsupported on plan/endpoint, it retries without that market.
+
+Outputs are consolidated into an OddsAPIMarketSnapshot:
+- Total line + over/under odds
+- Home spread line + home/away odds
+- Home/away moneylines
+- Team totals + odds (if present)
+
+
+4) Feature engineering (halftime representation)
+The core modeling frame is: predict second-half outcomes using information available by halftime.
+
+Runtime feature builder (src/predict_from_gameid_v3_runtime.py) constructs one row with:
+
+4.1 Halftime score features
+- h1_home
+- h1_away
+- h1_total = h1_home + h1_away
+- h1_margin = h1_home - h1_away
+
+4.2 Play-by-play “behavior counts” from first half
+Derived from PBP actions where period <= 2.
+Counts are aggregated by actionType prefixes (examples include):
+- 2pt/3pt makes/misses
+- turnovers
+- rebounds
+- fouls
+- timeouts
+- substitutions
+
+(Exact keys are produced by behavior_counts_1h in src/predict_from_gameid_v2.py.)
+
+4.3 Rate / efficiency / pace features
+From boxscore team statistics, features are computed per team vs opponent:
+- eFG%: (FGM + 0.5*3PM) / FGA
+- FTr: FTA / FGA
+- 3PAr: 3PA / FGA
+- TOV rate: TO / possessions
+- ORB%: OREB / (OREB + opp DREB)
+- possessions (1H): FGA + 0.44*FTA + TO - OREB
+- PPP (1H): PTS / possessions
+
+These are built for both teams with prefixes:
+- home_* (using home totals vs away totals)
+- away_* (using away totals vs home totals)
+
+Additionally:
+- game_poss_1h = average(home_poss_1h, away_poss_1h)
+
+Design intent:
+- Keep the feature set small, stable, and feasible from live JSON.
+- Avoid features that require paid data feeds or complicated joins.
+
+
+5) Modeling approach and methodology
+5.1 Two-head prediction framing
+Models are trained as “two-head” predictors:
+- Head 1: predict h2_total (2nd half total points)
+- Head 2: predict h2_margin (2nd half margin, home - away)
+
+This decomposition is deliberate:
+- Total and margin are a natural basis for market mapping.
+- It is easy to derive team points from (total, margin):
+  home_2h = (h2_total + h2_margin)/2
+  away_2h = (h2_total - h2_margin)/2
+
+5.2 Production model stack (final selection)
+Per docs/model_selection.md and runtime predictor:
+
+- Game total head:
+  Artifact: models_v2/gbt_twohead.joblib
+  Model family: sklearn HistGradientBoosting (TwoHead wrapper)
+  Why: strong performance + small artifact size (Streamlit-friendly).
+
+- Margin head:
+  Artifact: models_v2/ridge_twohead.joblib
+  Model family: sklearn Ridge regression (TwoHead wrapper)
+  Why: stability and calibration (especially important for win probability).
+
+Notes:
+- A Random Forest two-head exists but is intentionally not shipped in production due to artifact size.
+- Backtest-only optional models (XGBoost/CatBoost) are supported in dev requirements but not used in Streamlit runtime.
+
+5.3 Model artifacts and versioning
+Each saved joblib is a dict payload:
+- model_name
+- model_version
+- feature_version
+- features: list[str]
+- total: { model, residual_sigma }
+- margin: { model, residual_sigma }
+
+The runtime predictor aligns features strictly:
+- If artifact specifies features, it selects X[features].
+- This prevents train/serve skew.
+
+
+6) Projection generation (step-by-step)
+Given a GAME_ID (or NBA URL), the predictor produces:
+
+6.1 Fetch and parse live data
+- Fetch boxscore JSON
+- Fetch play-by-play JSON
+
+6.2 Compute halftime features
+- halftime score
+- first-half behavior counts
+- first-half rate features
+
+6.3 Run model inference (2H means)
+- mu_total_2h from total model head
+- mu_margin_2h from margin model head
+
+6.4 Derive 2H team points (means)
+- mu_h2_home = (mu_total_2h + mu_margin_2h) / 2
+- mu_h2_away = (mu_total_2h - mu_margin_2h) / 2
+
+6.5 Derive full-game projections (means)
+- final_home_mu = h1_home + mu_h2_home
+- final_away_mu = h1_away + mu_h2_away
+- final_total_mu = final_home_mu + final_away_mu
+- final_margin_mu = final_home_mu - final_away_mu
+
+6.6 Provide live score context (not the same as the predicted mean)
+Runtime also exposes:
+- live_home, live_away, live_total, live_margin
+These are for UI context and (in future iterations) could support dynamic re-forecasting.
+
+
+7) Uncertainty quantification and calibration methodology
+7.1 Residual sigma
+Each model head stores a residual_sigma estimated during training.
+This sigma is used as the base uncertainty estimate in production:
+- sd_total = gbt_twohead.total.residual_sigma (fallback default 12.0)
+- sd_margin = ridge_twohead.margin.residual_sigma (fallback default 8.0)
+
+7.2 Prediction intervals (PI80)
+PerryPicks uses a Normal approximation for prediction intervals:
+- Z80 = 1.2815515655
+- PI80(mu, sigma) = [mu - Z80*sigma, mu + Z80*sigma]
+
+It produces PI80 bands for:
+- 2H total
+- 2H margin
+- final total
+- final margin
+- final home points
+- final away points
+
+7.3 Team total uncertainty (variance propagation)
+Team points are derived from total+margin.
+Under an independence assumption:
+- home = (total + margin)/2
+- Var(home) = (Var(total) + Var(margin))/4
+- sd_team = sqrt((sd_total^2 + sd_margin^2) / 4)
+
+This is intentionally conservative to avoid overconfidence.
+
+7.4 Offline calibration report
+A lightweight calibration/health panel exists (but may be hidden in the UI).
+It reads offline backtest artifacts (CSV) and summarizes:
+- PI80 coverage vs target ~0.80
+- Brier score for win probability derived from margin distribution
+
+
+8) Betting market evaluation (probabilities, edges, sizing)
+8.1 Markets supported
+Given user-provided market inputs (or Odds API autofill), the system can evaluate:
+- Game total (Over/Under)
+- Spread (home spread line, away implied)
+- Moneyline (home/away)
+- Team totals (home/away O/U)
+
+8.2 Probability model (Normal assumption)
+PerryPicks assumes key targets are Normally distributed:
+- Final total ~ Normal(final_total_mu, sd_total)
+- Final margin (home - away) ~ Normal(final_margin_mu, sd_margin)
+- Team total ~ Normal(final_team_mu, sd_team)
+
+Then computes:
+- P(Over line)
+- P(Home covers)
+- P(Home wins) from margin distribution
+
+8.3 Break-even probability and edge
+Given American odds, break-even probability is computed.
+Edge is:
+  edge = P(hit) - P(breakeven)
+
+8.4 Expected value (per $100)
+The app computes expected profit per $100 stake using decimal odds:
+  EV_profit = p * profit_if_win - (1-p) * stake
+
+8.5 Kelly sizing
+Kelly fraction is computed from odds and p (then multiplied by a “kelly_mult”):
+- A fractional Kelly is used to reduce volatility.
+- A hard cap is applied via policy (max bankroll fraction per bet).
+
+8.6 Bet policies
+Policies are explicit rule sets applied after the math:
+- Conservative
+- Standard
+- Aggressive
+
+Policy parameters include:
+- minimum edge threshold
+- minimum model probability
+- fractional Kelly multiplier
+- max bankroll fraction per bet
+- max number of bets to recommend
+
+This is intended to reduce overbetting and avoid low-signal wagers.
+
+
+9) Tracking and snapshotting (time-series probability drift)
+PerryPicks includes optional tracking infrastructure:
+- Bets are stored in SQLite (via src/storage/sqlite_store.py).
+- Snapshot payloads (predictions) can be stored over time.
+
+Tracking UI supports:
+- Selecting a recommended bet to “track”
+- Recording periodic prediction snapshots (throttled)
+- Computing P(hit) for that same tracked bet over snapshots (probability drift)
+
+Probability drift is computed via src/domain/bet_probability.py:
+- It reconstructs mu from prediction bands midpoints.
+- It uses sd derived/stored on the snapshot (if provided).
+
+Note:
+- Streamlit Cloud free hosting can have ephemeral disk. Export/Import is available in code (though UI may hide it).
+
+
+10) Training pipeline (how models are built)
+10.1 Data compilation (two seasons)
+Training data is built from NBA CDN caches:
+- src/data/compiler.py
+
+Process:
+- Fetch (or load) game IDs for two seasons.
+- For each game:
+  - cache boxscore JSON to data/raw/box/{gid}.json
+  - cache play-by-play actions to data/raw/pbp/{gid}.json
+- Extract halftime features and final outcomes.
+
+Targets:
+- h2_total
+- h2_margin
+
+Outputs:
+- Parquet file under data/processed/*.parquet
+- Game ID list JSON for reproducibility
+
+10.2 Enrichment (optional)
+An enrichment step can add possessions/PPP features using cached PBP.
+(See docs/training.md and src/data/enrich_training_data.py.)
+
+10.3 Model training
+- src/modeling/train_models.py
+
+It loads the parquet, selects feature columns, and trains:
+- RidgeTwoHeadModel
+- RandomForestTwoHeadModel
+- GBTTwoHeadModel
+Optional (backtest-only):
+- XGBoostTwoHeadModel
+- CatBoostTwoHeadModel
+
+Each model head stores residual sigma for PI calculations.
+
+
+11) Backtesting methodology (measuring and improving accuracy)
+11.1 Walk-forward backtest (leakage-aware)
+- src/modeling/walkforward_backtest.py
+
+Key ideas:
+- Games are sorted chronologically by gameTimeUTC.
+- A walk-forward split is used:
+  - train on an expanding window
+  - test on the next chunk
+  - advance by a step size
+
+This is more realistic than random K-fold for time-series sports.
+
+Metrics computed per fold/model:
+- MAE and RMSE for h2_total
+- MAE and RMSE for h2_margin
+- PI80 coverage for total and margin
+- Average PI80 width (interval sharpness)
+- Brier score for win probability derived from margin distribution
+
+11.2 Nested walk-forward tuning (overnight)
+There is infrastructure for longer-running nested backtests with inner folds/trials.
+(See docs/offline_backtest.md and src/modeling/nested_walkforward_backtest.py.)
+
+Goal:
+- Tune hyperparameters without contaminating the outer test set.
+- Produce more reliable estimates of generalization.
+
+11.3 Model selection for production
+Per docs/model_selection.md:
+- Margin: Ridge chosen for calibration stability and Brier score.
+- Total: GBT chosen for performance and small artifact size.
+- Random Forest excluded from production due to artifact size constraints.
+
+
+12) How PerryPicks improves accuracy over iterations
+This system is designed to improve accuracy through a disciplined loop:
+
+A) Feature improvements
+- Start with halftime score + simple behavior counts.
+- Add efficiency/pace rate features (possessions, PPP, eFG, TO rate, etc.).
+- Ensure runtime feature list matches training features.
+
+B) Leakage control / evaluation realism
+- Use chronological ordering and walk-forward evaluation.
+- Avoid random splits that overestimate performance.
+
+C) Uncertainty calibration
+- Use residual sigma from training rather than hard-coded SDs.
+- Validate PI80 coverage against target (0.80).
+- Prefer models that are both accurate and well-calibrated.
+
+D) Model selection criteria aligned to betting decisions
+- Accuracy (RMSE/MAE) matters, but probability quality matters more.
+- Use Brier score on win probability derived from margin as a calibration proxy.
+- Gate recommendations with policy thresholds to reduce false-positive bets.
+
+E) Operational constraints
+- Keep models small and deterministic for Streamlit Cloud.
+- Avoid heavy runtime dependencies (xgboost/catboost not required to serve).
+
+
+13) Current limitations / assumptions (important for reviewers)
+- Normality assumption: totals and margins are modeled as Normal for probabilities.
+- Independence assumption: total and margin treated as independent for team total variance propagation.
+- Live 2H updating: runtime captures live score, but the current mean forecast is primarily a halftime-based model (dynamic re-forecasting is a future enhancement).
+- Ephemeral storage: Streamlit Cloud may not persist SQLite across redeploys.
+- Market microstructure: no explicit modeling of line movement/closing line value; odds are treated as given at decision time.
+
+
+14) Suggested improvement directions (review prompts)
+Reviewers can focus on:
+
+Modeling:
+- Whether margin and total should be modeled jointly (correlated) instead of independent.
+- Whether to move from Normal approximations to quantile regression or conformal prediction for intervals.
+- Whether dynamic re-forecasting (incorporating 2H score/time into mu) improves decision quality.
+
+Features:
+- Incorporating team priors (season-to-date pace/efficiency) and opponent adjustments.
+- More granular play-by-play features (e.g., foul trouble, lineup changes) if stable.
+
+Evaluation:
+- Extending backtests to simulate actual betting ROI with realistic vig and limits.
+- Calibration curves on probabilities (reliability diagrams) per market.
+
+Product/UX:
+- Guardrails for missing lines/odds.
+- Clearer explanation of probability drift and confidence.
+- Better persistence strategy (export/import always visible, or a free-tier DB).
+
+
+END OF SUMMARY
