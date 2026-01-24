@@ -28,4 +28,4 @@ wheels/
 catboost_info/
 
 # Large model artifacts not used in production
-models_v2/random_forest_twohead.joblib
+# (kept empty on purpose; RF is now a production candidate)

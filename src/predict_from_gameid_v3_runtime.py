@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
+import os
 
 from src.betting import normal_from_q10q90
 
@@ -169,6 +170,23 @@ def _align_features(X: pd.DataFrame, features: list[str]) -> pd.DataFrame:
     return out[features]
 
 
+def _model_path(model_name: str) -> str:
+    """Map friendly model names to artifact paths.
+
+    Keep this tiny + explicit (Zen puppy hates magic).
+    """
+
+    name = str(model_name or "").strip().lower()
+    if name in {"gbt", "hgb", "histgb"}:
+        return "models_v2/gbt_twohead.joblib"
+    if name in {"ridge"}:
+        return "models_v2/ridge_twohead.joblib"
+    if name in {"rf", "random_forest", "randomforest"}:
+        return "models_v2/random_forest_twohead.joblib"
+
+    raise ValueError(f"Unknown model name: {model_name!r} (expected gbt|ridge|random_forest)")
+
+
 def predict_from_game_id(gid_or_url: str) -> Dict[str, Any]:
     """Production runtime predictor.
 
@@ -230,9 +248,12 @@ def predict_from_game_id(gid_or_url: str) -> Dict[str, Any]:
 
     X = pd.DataFrame([row])
 
-    # Load final models
-    total_model = _load_twohead("models_v2/gbt_twohead.joblib")
-    margin_model = _load_twohead("models_v2/ridge_twohead.joblib")
+    # Load final models (configurable via env vars)
+    total_choice = os.getenv("PERRYPICKS_TOTAL_MODEL", "gbt")
+    margin_choice = os.getenv("PERRYPICKS_MARGIN_MODEL", "ridge")
+
+    total_model = _load_twohead(_model_path(total_choice))
+    margin_model = _load_twohead(_model_path(margin_choice))
 
     # Feature alignment
     X_total = _align_features(X, total_model.features) if total_model.features else X
@@ -351,8 +372,16 @@ def predict_from_game_id(gid_or_url: str) -> Dict[str, Any]:
             "cov_total_margin": float(cov_tm),
         },
         "labels": {
-            "total": ("gbt(q80)" if total_model.total_q10_model is not None else f"gbt(sd={sd_total:.2f})"),
-            "margin": ("ridge(q80)" if margin_model.margin_q10_model is not None else f"ridge(sd={sd_margin:.2f})"),
+            "total": (
+                f"{total_model.model_name}(q80)"
+                if total_model.total_q10_model is not None
+                else f"{total_model.model_name}(sd={sd_total:.2f})"
+            ),
+            "margin": (
+                f"{margin_model.model_name}(q80)"
+                if margin_model.margin_q10_model is not None
+                else f"{margin_model.model_name}(sd={sd_margin:.2f})"
+            ),
         },
         "text": (
             f"GAME_ID: {gid}\n"
