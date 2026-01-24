@@ -93,14 +93,30 @@ def p_home_win(mu_margin: np.ndarray, sigma_margin: float) -> np.ndarray:
 # -----------------
 
 def _box_game_time_utc(box_path: Path) -> Optional[str]:
+    """Extract gameTimeUTC from a cached boxscore json.
+
+    We support two cache formats:
+    1) Full payload: {"game": {"gameTimeUTC": "...", ...}}
+    2) Slim payload (what our cache script writes): {"gameTimeUTC": "...", ...}
+    """
+
     try:
         data = json.loads(box_path.read_text())
+
+        # Format (2): slim
+        ts = data.get("gameTimeUTC")
+        if ts:
+            return str(ts)
+
+        # Format (1): full
         game = data.get("game") or {}
         ts = game.get("gameTimeUTC")
         if ts:
             return str(ts)
+
     except Exception:
         return None
+
     return None
 
 
