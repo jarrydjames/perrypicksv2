@@ -977,6 +977,15 @@ st.caption(
     "Includes totals, spreads, moneyline, and team totals (if you entered lines)."
 )
 
+rank_choice = st.radio(
+    "Rank bets by",
+    options=["Edge", "Probability to hit"],
+    horizontal=True,
+    index=0,
+    key="pp_rank_bets_by",
+)
+rank_by = "p" if rank_choice == "Probability to hit" else "edge"
+
 def track_reco(r: dict) -> None:
     store = get_store()
     bet_id = f"{gid}:{now_utc_iso()}:{r.get('type')}:{r.get('side')}"
@@ -993,7 +1002,7 @@ def track_reco(r: dict) -> None:
     st.success("Bet tracked. (Next refresh will capture a snapshot)")
 
 
-render_recommendations(recs, kelly_mult=float(kelly_mult), on_track=track_reco)
+render_recommendations(recs, kelly_mult=float(kelly_mult), rank_by=rank_by, on_track=track_reco)
 
 st.markdown("</div>", unsafe_allow_html=True)
 st.write("")

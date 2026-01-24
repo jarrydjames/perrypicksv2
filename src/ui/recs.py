@@ -17,6 +17,7 @@ def render_recommendations(
     recs: List[Dict[str, Any]],
     *,
     kelly_mult: float,
+    rank_by: str = "edge",
     on_track: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> None:
     """Mobile-friendly rec renderer.
@@ -27,7 +28,25 @@ def render_recommendations(
         st.info("Add market lines above to see bet evaluation.")
         return
 
-    top = recs[0]
+    rank = str(rank_by or "edge").strip().lower()
+
+    def fnum(v: Any) -> float:
+        try:
+            return float(v)
+        except Exception:
+            return float("-inf")
+
+    # Sort once, use everywhere.
+    if rank in {"p", "prob", "probability", "probability_to_hit"}:
+        # Primary: probability. Tie-break: edge.
+        sorted_recs = sorted(recs, key=lambda r: (fnum(r.get("p")), fnum(r.get("edge"))), reverse=True)
+        rank_label = "probability to hit"
+    else:
+        # Primary: edge. Tie-break: probability.
+        sorted_recs = sorted(recs, key=lambda r: (fnum(r.get("edge")), fnum(r.get("p"))), reverse=True)
+        rank_label = "edge"
+
+    top = sorted_recs[0]
     if top["edge"] <= 0.0:
         st.markdown("**Recommendation:** No clear value bet from the lines entered (all edges are ≤ 0).")
     else:
@@ -40,9 +59,9 @@ def render_recommendations(
         )
 
     with st.expander("Show top bets", expanded=False):
-        st.caption(f"Evaluated {len(recs)} bets. Showing top 10 by edge.")
+        st.caption(f"Evaluated {len(sorted_recs)} bets. Showing top 10 by {rank_label}.")
         show_all = st.checkbox("Show all evaluated bets", value=False, key="pp_show_all_bets")
-        shown = recs if show_all else recs[:10]
+        shown = sorted_recs if show_all else sorted_recs[:10]
 
         for i, r in enumerate(shown):
             ev100 = r.get("ev_per_100")
