@@ -27,6 +27,9 @@ Z80 = 1.2815515655446004
 # Module-level cache: we don't want to re-read JSONL every prediction.
 _PRIORS_MAP: dict[str, Any] | None = None
 
+# Module-level model cache: joblib load is expensive (and Streamlit reruns a lot).
+_MODEL_CACHE: dict[str, "TwoHeadRuntime"] = {}
+
 
 def _get_priors_map() -> dict[str, Any]:
     global _PRIORS_MAP
@@ -170,6 +173,15 @@ def _align_features(X: pd.DataFrame, features: list[str]) -> pd.DataFrame:
     return out[features]
 
 
+def _get_model(path: str) -> TwoHeadRuntime:
+    cached = _MODEL_CACHE.get(path)
+    if cached is not None:
+        return cached
+    m = _load_twohead(path)
+    _MODEL_CACHE[path] = m
+    return m
+
+
 def _model_path(model_name: str) -> str:
     """Map friendly model names to artifact paths.
 
@@ -192,7 +204,7 @@ def predict_from_game_id(gid_or_url: str) -> Dict[str, Any]:
 
     Final model use-cases:
     - margin (spread/ML): Ridge twohead (calibration-first)
-    - total (game total): GBT twohead (stable, small artifact)
+    - total (game total): Ridge twohead (best chrono walkforward RMSE)
     - team totals: derived from (total, margin) with conservative variance propagation
 
     Returns a dict shaped like what app.py expects.
@@ -249,11 +261,12 @@ def predict_from_game_id(gid_or_url: str) -> Dict[str, Any]:
     X = pd.DataFrame([row])
 
     # Load final models (configurable via env vars)
-    total_choice = os.getenv("PERRYPICKS_TOTAL_MODEL", "gbt")
+    # Chronological walkforward results: Ridge is best for BOTH total + margin.
+    total_choice = os.getenv("PERRYPICKS_TOTAL_MODEL", "ridge")
     margin_choice = os.getenv("PERRYPICKS_MARGIN_MODEL", "ridge")
 
-    total_model = _load_twohead(_model_path(total_choice))
-    margin_model = _load_twohead(_model_path(margin_choice))
+    total_model = _get_model(_model_path(total_choice))
+    margin_model = _get_model(_model_path(margin_choice))
 
     # Feature alignment
     X_total = _align_features(X, total_model.features) if total_model.features else X
