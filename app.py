@@ -278,7 +278,8 @@ with st.container():
             from src.data.scoreboard import fetch_scoreboard, format_game_label
 
             st.session_state.setdefault("pp_pick_date", _dt.date.today())
-            pick_date = st.date_input("Date", value=st.session_state["pp_pick_date"], key="pp_pick_date")
+            # Streamlit: don't pass both `value=` and a `key=` with session_state pre-set.
+            pick_date = st.date_input("Date", key="pp_pick_date")
 
             try:
                 games = fetch_scoreboard(pick_date)

@@ -21,6 +21,7 @@ import requests
 
 
 CDN_SCOREBOARD = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_{yyyymmdd}.json"
+DATA_NBA_SCOREBOARD = "https://data.nba.net/prod/v2/{yyyymmdd}/scoreboard.json"
 
 
 @dataclass(frozen=True)
@@ -47,21 +48,43 @@ def _team_name(team_block: dict) -> str:
     return "TEAM"
 
 
-def fetch_scoreboard(date: dt.date, *, timeout_s: int = 10) -> List[ScoreboardGame]:
-    yyyymmdd = date.strftime("%Y%m%d")
-    url = CDN_SCOREBOARD.format(yyyymmdd=yyyymmdd)
-
+def _get_json(url: str, *, timeout_s: int) -> dict:
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/json,text/plain,*/*",
         "Referer": "https://www.nba.com/",
     }
-
     r = requests.get(url, headers=headers, timeout=int(timeout_s))
     r.raise_for_status()
-    data = r.json()
+    return r.json()
 
-    games = (((data or {}).get("scoreboard") or {}).get("games")) or []
+
+def fetch_scoreboard(date: dt.date, *, timeout_s: int = 10) -> List[ScoreboardGame]:
+    yyyymmdd = date.strftime("%Y%m%d")
+
+    data = None
+    last_err: Exception | None = None
+
+    # Primary: nba CDN (sometimes 403s on cloud IPs)
+    try:
+        data = _get_json(CDN_SCOREBOARD.format(yyyymmdd=yyyymmdd), timeout_s=timeout_s)
+    except Exception as e:
+        last_err = e
+        data = None
+
+    # Fallback: data.nba.net (usually more reliable from Streamlit Cloud)
+    if data is None:
+        try:
+            data = _get_json(DATA_NBA_SCOREBOARD.format(yyyymmdd=yyyymmdd), timeout_s=timeout_s)
+        except Exception as e:
+            last_err = e
+            data = None
+
+    if data is None:
+        raise RuntimeError(f"Failed to fetch scoreboard ({yyyymmdd}): {last_err!r}")
+
+    # Parse either schema
+    games = (((data or {}).get("scoreboard") or {}).get("games")) or data.get("games") or []
     out: List[ScoreboardGame] = []
 
     for g in games:
@@ -69,38 +92,89 @@ def fetch_scoreboard(date: dt.date, *, timeout_s: int = 10) -> List[ScoreboardGa
         if not gid:
             continue
 
-        away_team = (g.get("awayTeam") or {}) if isinstance(g.get("awayTeam"), dict) else {}
-        home_team = (g.get("homeTeam") or {}) if isinstance(g.get("homeTeam"), dict) else {}
+        # Schema A (cdn.nba.com): awayTeam/homeTeam
+        if isinstance(g.get("awayTeam"), dict) and isinstance(g.get("homeTeam"), dict):
+            away_team = g.get("awayTeam") or {}
+            home_team = g.get("homeTeam") or {}
+            away = _team_name(away_team)
+            home = _team_name(home_team)
 
-        away = _team_name(away_team)
-        home = _team_name(home_team)
+            status = _safe_str(g.get("gameStatusText") or g.get("gameStatus"))
 
-        status = _safe_str(g.get("gameStatusText") or g.get("gameStatus"))
-        if not status:
-            status = ""
-
-        period = None
-        clock = None
-        try:
-            period = int(g.get("period")) if g.get("period") is not None else None
-        except Exception:
             period = None
+            try:
+                period = int(g.get("period")) if g.get("period") is not None else None
+            except Exception:
+                period = None
 
-        c = g.get("gameClock")
-        if isinstance(c, str) and c.strip():
-            clock = c.strip()
+            clock = None
+            c = g.get("gameClock")
+            if isinstance(c, str) and c.strip():
+                clock = c.strip()
 
-        away_score = None
-        home_score = None
-        try:
-            away_score = int(away_team.get("score")) if away_team.get("score") is not None else None
-        except Exception:
             away_score = None
-
-        try:
-            home_score = int(home_team.get("score")) if home_team.get("score") is not None else None
-        except Exception:
             home_score = None
+            try:
+                away_score = int(away_team.get("score")) if away_team.get("score") is not None else None
+            except Exception:
+                away_score = None
+
+            try:
+                home_score = int(home_team.get("score")) if home_team.get("score") is not None else None
+            except Exception:
+                home_score = None
+
+        # Schema B (data.nba.net): vTeam/hTeam
+        else:
+            v = (g.get("vTeam") or {}) if isinstance(g.get("vTeam"), dict) else {}
+            h = (g.get("hTeam") or {}) if isinstance(g.get("hTeam"), dict) else {}
+
+            away = _safe_str(v.get("triCode") or v.get("nickname") or v.get("teamName")) or "AWAY"
+            home = _safe_str(h.get("triCode") or h.get("nickname") or h.get("teamName")) or "HOME"
+
+            status_num = None
+            try:
+                status_num = int(g.get("statusNum")) if g.get("statusNum") is not None else None
+            except Exception:
+                status_num = None
+
+            status = _safe_str(g.get("gameStatusText"))
+            if not status:
+                if status_num == 1:
+                    status = "Pre"
+                elif status_num == 2:
+                    status = "Live"
+                elif status_num == 3:
+                    status = "Final"
+                else:
+                    status = ""
+
+            period = None
+            per = g.get("period")
+            if isinstance(per, dict):
+                try:
+                    period = int(per.get("current")) if per.get("current") is not None else None
+                except Exception:
+                    period = None
+
+            clock = None
+            c = g.get("clock")
+            if isinstance(c, str) and c.strip():
+                clock = c.strip()
+
+            away_score = None
+            home_score = None
+            try:
+                away_score = int(v.get("score")) if v.get("score") is not None else None
+            except Exception:
+                away_score = None
+
+            try:
+                home_score = int(h.get("score")) if h.get("score") is not None else None
+            except Exception:
+                home_score = None
+
+        status = (status or "").strip()
 
         out.append(
             ScoreboardGame(
