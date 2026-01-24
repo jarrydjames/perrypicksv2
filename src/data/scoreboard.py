@@ -109,7 +109,8 @@ def fetch_scoreboard(date: dt.date, *, timeout_s: int = 10, include_live: bool =
     Optionally enriches with live status/score by calling boxscore_{gid}.json.
     """
 
-    ymd = date.strftime("%Y-%m-%d")
+    # scheduleLeagueV2 uses "MM/DD/YYYY 00:00:00" strings
+    sched_key = date.strftime("%m/%d/%Y")
     payload = _get_json(SCHEDULE_URL, timeout_s=timeout_s)
 
     league = (payload or {}).get("leagueSchedule") or {}
@@ -117,7 +118,8 @@ def fetch_scoreboard(date: dt.date, *, timeout_s: int = 10, include_live: bool =
 
     games: list[dict] = []
     for gd in game_dates:
-        if _safe_str(gd.get("gameDate")) == ymd:
+        gd_str = _safe_str(gd.get("gameDate"))
+        if gd_str.startswith(sched_key):
             games = gd.get("games") or []
             break
 
