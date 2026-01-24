@@ -8,6 +8,10 @@ from typing import Dict, List
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import GradientBoostingRegressor, HistGradientBoostingRegressor
+from sklearn.multioutput import MultiOutputRegressor
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
 
 from src.data.training_loader import DEFAULT_TRAINING_PARQUET, TrainingDataSpec, load_training_df
 
@@ -35,34 +39,94 @@ def train_from_parquet(
     y_total = df[TARGET_TOTAL].to_numpy(dtype=float)
     y_margin = df[TARGET_MARGIN].to_numpy(dtype=float)
 
+    # Feature version: bump when feature engineering changes (e.g., market priors).
+    feature_ver = "v2"
+
     models = [
-        RidgeTwoHeadModel(alpha=2.0, feature_version="v1"),
-        RandomForestTwoHeadModel(feature_version="v1"),
-        GBTTwoHeadModel(feature_version="v1"),
+        RidgeTwoHeadModel(alpha=2.0, feature_version=feature_ver),
+        RandomForestTwoHeadModel(feature_version=feature_ver),
+        GBTTwoHeadModel(feature_version=feature_ver),
     ]
 
     # Backtest-only optional models (do NOT add to Streamlit runtime deps)
     if include_xgb:
         from src.modeling.xgb_models import XGBoostTwoHeadModel
 
-        models.append(XGBoostTwoHeadModel(feature_version="v1"))
+        models.append(XGBoostTwoHeadModel(feature_version=feature_ver))
 
     if include_cat:
         from src.modeling.cat_models import CatBoostTwoHeadModel
 
-        models.append(CatBoostTwoHeadModel(feature_version="v1"))
+        models.append(CatBoostTwoHeadModel(feature_version=feature_ver))
+
+    def q_model(alpha: float) -> Pipeline:
+        # Quantile regressor that can handle NaNs via imputation.
+        return Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "model",
+                    GradientBoostingRegressor(
+                        loss="quantile",
+                        alpha=float(alpha),
+                        random_state=0,
+                    ),
+                ),
+            ]
+        )
 
     for m in models:
         m.fit(X, feats, y_total, y_margin)
         heads = m.trained_heads()
+
+        # Quantile models for distribution-free-ish 80% intervals
+        q10_total = q_model(0.10).fit(X, y_total)
+        q90_total = q_model(0.90).fit(X, y_total)
+        q10_margin = q_model(0.10).fit(X, y_margin)
+        q90_margin = q_model(0.90).fit(X, y_margin)
+
+        # Joint model (total + margin) and residual covariance
+        joint = Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                (
+                    "model",
+                    MultiOutputRegressor(
+                        HistGradientBoostingRegressor(
+                            max_depth=6,
+                            learning_rate=0.05,
+                            max_iter=500,
+                            min_samples_leaf=30,
+                            random_state=0,
+                        )
+                    ),
+                ),
+            ]
+        ).fit(X, np.vstack([y_total, y_margin]).T)
+
+        joint_pred = joint.predict(X)
+        res_t = y_total - joint_pred[:, 0]
+        res_m = y_margin - joint_pred[:, 1]
+        cov = np.cov(np.vstack([res_t, res_m]))  # 2x2
 
         payload = {
             "model_name": m.name,
             "model_version": m.version,
             "feature_version": m.feature_version,
             "features": feats,
-            "total": {"model": heads.total.model, "residual_sigma": heads.total.residual_sigma},
-            "margin": {"model": heads.margin.model, "residual_sigma": heads.margin.residual_sigma},
+            "joint": {"model": joint, "residual_cov": cov.tolist()},
+            "total": {
+                "model": heads.total.model,
+                "residual_sigma": heads.total.residual_sigma,
+                "q10_model": q10_total,
+                "q90_model": q90_total,
+            },
+            "margin": {
+                "model": heads.margin.model,
+                "residual_sigma": heads.margin.residual_sigma,
+                "q10_model": q10_margin,
+                "q90_model": q90_margin,
+            },
         }
 
         out_path = out_dir / f"{m.name}_twohead.joblib"

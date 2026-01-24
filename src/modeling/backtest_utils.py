@@ -38,6 +38,39 @@ def brier(y_true: np.ndarray, p: np.ndarray) -> float:
     return float(np.mean((p - y_true) ** 2))
 
 
+def ece(y_true: np.ndarray, p: np.ndarray, *, n_bins: int = 10) -> float:
+    """Expected calibration error for binary probabilities.
+
+    Returns a value in [0,1], lower is better.
+    """
+
+    y_true = np.asarray(y_true, dtype=float)
+    p = np.asarray(p, dtype=float)
+
+    mask = np.isfinite(y_true) & np.isfinite(p)
+    y_true = y_true[mask]
+    p = p[mask]
+
+    if len(p) == 0:
+        return 0.0
+
+    n_bins = int(max(2, n_bins))
+    bins = np.linspace(0.0, 1.0, n_bins + 1)
+
+    ece_val = 0.0
+    for i in range(n_bins):
+        lo, hi = bins[i], bins[i + 1]
+        in_bin = (p >= lo) & (p < hi) if i < n_bins - 1 else (p >= lo) & (p <= hi)
+        n = int(np.sum(in_bin))
+        if n == 0:
+            continue
+        acc = float(np.mean(y_true[in_bin]))
+        conf = float(np.mean(p[in_bin]))
+        ece_val += (n / len(p)) * abs(acc - conf)
+
+    return float(ece_val)
+
+
 def normal_cdf(z: np.ndarray) -> np.ndarray:
     """Normal CDF via erf (portable)."""
 

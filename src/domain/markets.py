@@ -55,9 +55,16 @@ def _add_rec(
     odds: int,
     p: float,
     kelly_mult: float,
+    volatility: float | None = None,
 ) -> None:
     be = breakeven_prob_from_american(odds)
     ev100 = _ev_profit(p=float(p), stake=100.0, odds=int(odds))
+    # Volatility-aware Kelly shrink (Enhancements.txt)
+    # If volatility is high, we scale down aggressiveness.
+    vol = max(0.0, float(volatility)) if volatility is not None else 0.0
+    kelly_raw = float(kelly_fraction(p, odds)) * float(kelly_mult)
+    kelly_adj = kelly_raw / (1.0 + vol) if vol > 0 else kelly_raw
+
     recs.append(
         {
             "type": bet_type,
@@ -68,7 +75,9 @@ def _add_rec(
             "breakeven": float(be),
             "edge": float(p - be),
             "ev_per_100": float(ev100),
-            "kelly": float(kelly_fraction(p, odds) * float(kelly_mult)),
+            "kelly": float(kelly_adj),
+            "kelly_raw": float(kelly_raw),
+            "volatility": float(vol),
         }
     )
 
@@ -87,6 +96,7 @@ def evaluate_markets(
     sd_team: Optional[float],
     inputs: MarketInputs,
     policy: Optional[BetPolicy] = None,
+    volatility: float | None = None,
 ) -> List[Dict[str, Any]]:
     """Return a ranked list of bet recommendations.
 
@@ -105,6 +115,7 @@ def evaluate_markets(
             odds=int(inputs.odds_over),
             p=p_over,
             kelly_mult=float(inputs.kelly_mult),
+            volatility=volatility,
         )
         _add_rec(
             recs,
@@ -114,6 +125,7 @@ def evaluate_markets(
             odds=int(inputs.odds_under),
             p=(1.0 - p_over),
             kelly_mult=float(inputs.kelly_mult),
+            volatility=volatility,
         )
 
     # Spread
@@ -127,6 +139,7 @@ def evaluate_markets(
             odds=int(inputs.odds_home),
             p=p_home_cover,
             kelly_mult=float(inputs.kelly_mult),
+            volatility=volatility,
         )
         _add_rec(
             recs,
@@ -136,6 +149,7 @@ def evaluate_markets(
             odds=int(inputs.odds_away),
             p=(1.0 - p_home_cover),
             kelly_mult=float(inputs.kelly_mult),
+            volatility=volatility,
         )
 
     # Moneyline (derived from margin distribution)
@@ -149,6 +163,7 @@ def evaluate_markets(
             odds=int(inputs.moneyline_home),
             p=p_home_win,
             kelly_mult=float(inputs.kelly_mult),
+            volatility=volatility,
         )
         _add_rec(
             recs,
@@ -158,6 +173,7 @@ def evaluate_markets(
             odds=int(inputs.moneyline_away),
             p=(1.0 - p_home_win),
             kelly_mult=float(inputs.kelly_mult),
+            volatility=volatility,
         )
 
     # Team totals
@@ -179,6 +195,7 @@ def evaluate_markets(
                 odds=int(inputs.odds_team_over_home),
                 p=p_over,
                 kelly_mult=float(inputs.kelly_mult),
+                volatility=volatility,
             )
             _add_rec(
                 recs,
@@ -188,6 +205,7 @@ def evaluate_markets(
                 odds=int(inputs.odds_team_under_home),
                 p=(1.0 - p_over),
                 kelly_mult=float(inputs.kelly_mult),
+                volatility=volatility,
             )
 
     if final_away_mu is not None and inputs.team_total_away and inputs.team_total_away > 0:
@@ -201,6 +219,7 @@ def evaluate_markets(
                 odds=int(inputs.odds_team_over_away),
                 p=p_over,
                 kelly_mult=float(inputs.kelly_mult),
+                volatility=volatility,
             )
             _add_rec(
                 recs,
@@ -210,6 +229,7 @@ def evaluate_markets(
                 odds=int(inputs.odds_team_under_away),
                 p=(1.0 - p_over),
                 kelly_mult=float(inputs.kelly_mult),
+                volatility=volatility,
             )
 
     recs.sort(key=lambda r: r["edge"], reverse=True)

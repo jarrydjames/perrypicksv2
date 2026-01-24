@@ -7,7 +7,8 @@ from typing import Dict, List
 import numpy as np
 import pandas as pd
 
-from src.modeling.backtest_utils import FoldSpec, attach_game_time_utc, brier, coverage, iter_walkforward_indices, mae, p_home_win, rmse
+from src.modeling.backtest_utils import FoldSpec, attach_game_time_utc, brier, coverage, ece, iter_walkforward_indices, mae, p_home_win, rmse
+from src.modeling.roi_sim import SimConfig, roi, simulate_threshold_strategy
 from src.modeling.base import BaseTwoHeadModel
 from src.modeling.feature_columns import feature_columns
 from src.modeling.sklearn_models import GBTTwoHeadModel, RandomForestTwoHeadModel, RidgeTwoHeadModel
@@ -45,9 +46,22 @@ def run_backtest(
     spec: FoldSpec,
     include_xgb: bool,
     include_cat: bool,
+    drop_market_priors: bool = False,
+    run_roi: bool = False,
+    roi_edge_threshold: float = 0.06,
+    roi_odds: int = -110,
 ) -> None:
     df = pd.read_parquet(parquet_path)
     df = attach_game_time_utc(df, box_dir=box_dir)
+
+    if drop_market_priors:
+        drop_cols = [
+            "market_total_line",
+            "market_home_spread_line",
+            "market_home_team_total_line",
+            "market_away_team_total_line",
+        ]
+        df = df.drop(columns=[c for c in drop_cols if c in df.columns])
     df = df.sort_values("gameTimeUTC").reset_index(drop=True)
 
     feats = feature_columns(df, ignore={"gameTimeUTC"})
@@ -84,6 +98,13 @@ def run_backtest(
             p_win = p_home_win(mu_m, sig_m)
             y_win = (ym_te > 0).astype(float)
 
+            sim = None
+            if run_roi:
+                # NOTE: We do not have historic moneyline prices in the dataset.
+                # This sim assumes a fixed -110 price (synthetic), so treat ROI as relative.
+                cfg = SimConfig(stake=100.0, edge_threshold=float(roi_edge_threshold), odds=int(roi_odds))
+                sim = simulate_threshold_strategy(p=p_win, y=y_win, line=np.zeros_like(y_win), cfg=cfg, bet_over=True)
+
             rows.append(
                 {
                     "fold": fold_i,
@@ -99,6 +120,10 @@ def run_backtest(
                     "pi80_width_total": float(np.mean(t_hi - t_lo)),
                     "pi80_width_margin": float(np.mean(m_hi - m_lo)),
                     "brier_win": brier(y_win, p_win),
+                    "ece_win": ece(y_win, p_win, n_bins=10),
+                    "roi": roi(sim) if sim else np.nan,
+                    "n_bets": float(sim.n_bets) if sim else np.nan,
+                    "max_drawdown": float(sim.max_drawdown) if sim else np.nan,
                 }
             )
 
@@ -119,6 +144,10 @@ def run_backtest(
         "pi80_width_total",
         "pi80_width_margin",
         "brier_win",
+        "ece_win",
+        "roi",
+        "n_bets",
+        "max_drawdown",
     ]].mean().sort_values("rmse_total")
     print(summary.to_string(float_format=lambda x: f"{x:.4f}"))
     print(f"\nSaved fold metrics -> {out_csv}")
@@ -141,6 +170,15 @@ def main() -> None:
 
     ap.add_argument("--include-xgb", action="store_true")
     ap.add_argument("--include-cat", action="store_true")
+    ap.add_argument(
+        "--drop-market-priors",
+        action="store_true",
+        help="Ablation: remove market_* features before training/backtest",
+    )
+
+    ap.add_argument("--roi", action="store_true", help="Simulate (synthetic) betting ROI")
+    ap.add_argument("--roi-edge", type=float, default=0.06, help="Edge threshold to place bet")
+    ap.add_argument("--roi-odds", type=int, default=-110, help="American odds used for ROI sim")
 
     args = ap.parse_args()
 
@@ -151,6 +189,10 @@ def main() -> None:
         spec=FoldSpec(train_min=args.train_min, test_size=args.test_size, step_size=args.step_size),
         include_xgb=args.include_xgb,
         include_cat=args.include_cat,
+        drop_market_priors=bool(args.drop_market_priors),
+        run_roi=bool(args.roi),
+        roi_edge_threshold=float(args.roi_edge),
+        roi_odds=int(args.roi_odds),
     )
 
 

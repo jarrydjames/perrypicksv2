@@ -29,6 +29,36 @@ def _derived_from_pred(pred: Dict[str, Any]) -> tuple[Optional[float], Optional[
 
 
 def _final_mus_from_pred(pred: Dict[str, Any]) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    """Extract final means from a prediction snapshot.
+
+    Preference order (best -> fallback):
+    1) pred['_derived']['mu_final_*'] if app computed live-conditioned means
+    2) pred['pred']['pred_final_home/away'] (runtime means)
+    3) midpoint of pred['bands80'][final_*]
+    """
+
+    derived = pred.get("_derived", {}) or {}
+    try:
+        mu_total = derived.get("mu_final_total")
+        mu_margin = derived.get("mu_final_margin")
+        mu_home = derived.get("mu_final_home")
+        mu_away = derived.get("mu_final_away")
+        if all(v is not None for v in (mu_total, mu_margin, mu_home, mu_away)):
+            return (float(mu_total), float(mu_margin), float(mu_home), float(mu_away))
+    except Exception:
+        pass
+
+    p = pred.get("pred", {}) or {}
+    try:
+        h = p.get("pred_final_home")
+        a = p.get("pred_final_away")
+        if h is not None and a is not None:
+            h = float(h)
+            a = float(a)
+            return (h + a, h - a, h, a)
+    except Exception:
+        pass
+
     bands = pred.get("bands80", {}) or {}
 
     def mid(key: str) -> Optional[float]:
@@ -40,12 +70,7 @@ def _final_mus_from_pred(pred: Dict[str, Any]) -> tuple[Optional[float], Optiona
             return None
         return (float(lo) + float(hi)) / 2.0
 
-    return (
-        mid("final_total"),
-        mid("final_margin"),
-        mid("final_home"),
-        mid("final_away"),
-    )
+    return (mid("final_total"), mid("final_margin"), mid("final_home"), mid("final_away"))
 
 
 def prob_hit_for_bet(

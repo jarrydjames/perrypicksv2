@@ -49,10 +49,17 @@ Once compilation is done and you have cached raw data under:
   --out data/processed/halftime_training_23_24_enriched.parquet
 ```
 
-## 3) Train models
+## 3) Quick sanity check: priors coverage
 
 ```bash
-python -m src.modeling.train_models --data data/processed/halftime_training_23_24.parquet --out-dir models_v2
+.venv/bin/python scripts/report_priors_coverage.py \
+  --parquet data/processed/halftime_training_23_24_enriched.parquet
+```
+
+## 4) Train models
+
+```bash
+python -m src.modeling.train_models --data data/processed/halftime_training_23_24_enriched.parquet --out-dir models_v2
 ```
 
 Outputs:

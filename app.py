@@ -239,15 +239,6 @@ init_state()
 # -----------------------------
 # Header
 # -----------------------------
-import os
-
-logo_path = os.path.join("assets", "logo.png")
-logo_url = None
-try:
-    logo_url = st.secrets.get("LOGO_URL")
-except Exception:
-    logo_url = None
-
 st.markdown(
     """
     <style>
@@ -257,36 +248,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Mobile-friendly header: no side logos (they make layout weird on narrow screens).
 st.markdown('<div class="pp-card">', unsafe_allow_html=True)
-
-lcol, ccol, rcol = st.columns([1.2, 6.0, 1.2], vertical_alignment="center")
-
-with lcol:
-    if os.path.exists(logo_path):
-        st.image(logo_path, width=72)
-    elif logo_url:
-        st.image(str(logo_url), width=72)
-
-with ccol:
-    st.markdown(
-        """
-        <div class="pp-header-text">
-          <div class="pp-title">PerryPicks 🐶</div>
-          <div class="pp-sub">Paste an NBA game URL or GAME_ID. Add lines/odds. Get a projection + value bets + tracking.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-with rcol:
-    if os.path.exists(logo_path):
-        st.image(logo_path, width=72)
-    elif logo_url:
-        st.image(str(logo_url), width=72)
-
+st.markdown(
+    """
+    <div class="pp-header-text">
+      <div class="pp-title">PerryPicks</div>
+      <div class="pp-sub">Paste an NBA game URL or GAME_ID. Add lines/odds. Get a projection + value bets + tracking.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 st.markdown("</div>", unsafe_allow_html=True)
-
-st.write("")
 
 # -----------------------------
 # Inputs (top, no sidebar)
@@ -298,6 +271,32 @@ with st.container():
     c1, c2 = st.columns([2.0, 1.0], vertical_alignment="bottom")
 
     with c1:
+        # Optional: pick a game without leaving the app.
+        with st.expander("Pick game by date (no more nba.com copy/paste)", expanded=False):
+            import datetime as _dt
+
+            from src.data.scoreboard import fetch_scoreboard, format_game_label
+
+            st.session_state.setdefault("pp_pick_date", _dt.date.today())
+            pick_date = st.date_input("Date", value=st.session_state["pp_pick_date"], key="pp_pick_date")
+
+            try:
+                games = fetch_scoreboard(pick_date)
+            except Exception as e:
+                games = []
+                st.warning(f"Could not load scoreboard for {pick_date}: {e}")
+
+            if not games:
+                st.info("No games found for this date (or NBA CDN is being cranky).")
+            else:
+                labels = [format_game_label(g) for g in games]
+                idx = st.selectbox("Games", list(range(len(games))), format_func=lambda i: labels[i])
+                chosen = games[int(idx)]
+
+                if st.button("Use selected game", width="stretch"):
+                    st.session_state["game_input"] = chosen.game_id
+                    st.rerun()
+
         game_input = st.text_input(
             "Game URL or GAME_ID",
             value=st.session_state.get("game_input", DEFAULT_GAME),
@@ -537,12 +536,120 @@ def run_prediction():
     final_sd_total = base_sd_total
     final_sd_margin = base_sd_margin
 
-    if st.session_state.use_clock_shrink:
+    # Only shrink in the 2nd half. (Shrinking in Q1 is... not math.)
+    try:
+        per_i = int(period) if period is not None else None
+    except Exception:
+        per_i = None
+
+    min_rem_2h = None
+    if per_i is not None and per_i >= 3 and min_rem is not None:
+        # Clamp to regulation 2H window
+        min_rem_2h = min(24.0, max(0.0, float(min_rem)))
+
+    if st.session_state.use_clock_shrink and min_rem_2h is not None:
         min_total_sd = max(4.0, 0.35 * float(base_sd_total))
         min_margin_sd = max(3.0, 0.35 * float(base_sd_margin))
 
-        final_sd_total = shrink_sd_with_clock(final_sd_total, min_rem, min_sd=min_total_sd)
-        final_sd_margin = shrink_sd_with_clock(final_sd_margin, min_rem, min_sd=min_margin_sd)
+        # 1) clock-based shrink (sqrt-time)
+        final_sd_total = shrink_sd_with_clock(final_sd_total, min_rem_2h, min_sd=min_total_sd)
+        final_sd_margin = shrink_sd_with_clock(final_sd_margin, min_rem_2h, min_sd=min_margin_sd)
+
+        # 2) pace-based variance scaling (sqrt(remaining possessions))
+        # If the game is a track meet, uncertainty should be higher; if it's a slog, lower.
+        # We estimate possessions/min from live PBP and compare to a baseline pace.
+        pace = pred.get("_live", {}) or {}
+        try:
+            game_poss_2h = float(pace.get("game_poss_2h") or 0.0)
+        except Exception:
+            game_poss_2h = 0.0
+
+        mins_elapsed_2h = max(0.0, 24.0 - float(min_rem_2h))
+        poss_per_min = (game_poss_2h / mins_elapsed_2h) if (mins_elapsed_2h > 1e-6 and game_poss_2h > 0) else None
+
+        # NBA baseline: ~100 possessions/game => ~2.08 game possessions/min
+        baseline_ppm = 100.0 / 48.0
+
+        if poss_per_min is not None:
+            pace_factor = float(poss_per_min) / float(baseline_ppm)
+            # keep it sane; early Q3 can be noisy
+            pace_factor = max(0.75, min(1.35, pace_factor))
+            final_sd_total = float(final_sd_total) * (pace_factor ** 0.5)
+            final_sd_margin = float(final_sd_margin) * (pace_factor ** 0.5)
+
+        # re-apply floors post scaling
+        final_sd_total = max(float(min_total_sd), float(final_sd_total))
+        final_sd_margin = max(float(min_margin_sd), float(final_sd_margin))
+
+    # Live-conditioned means (helps tracking probabilities feel sane as the game evolves)
+    mu2h_total = None
+    mu2h_margin = None
+    try:
+        mu2h_total = float((pred.get("pred", {}) or {}).get("pred_2h_total"))
+        mu2h_margin = float((pred.get("pred", {}) or {}).get("pred_2h_margin"))
+    except Exception:
+        mu2h_total = None
+        mu2h_margin = None
+
+    live_home = float(pred.get("live_home") or 0)
+    live_away = float(pred.get("live_away") or 0)
+    live_total = live_home + live_away
+    live_margin = live_home - live_away
+
+    mu_final_total_live = None
+    mu_final_margin_live = None
+    mu_final_home_live = None
+    mu_final_away_live = None
+
+    if (
+        per_i is not None
+        and per_i >= 3
+        and min_rem_2h is not None
+        and live_total > 0
+        and mu2h_total is not None
+        and mu2h_margin is not None
+    ):
+        # Pace-aware live conditioning (recommended): use observed 2H possessions + scoring
+        # so totals/spreads drift with what the game is actually doing.
+        pace = pred.get("_live", {}) or {}
+        try:
+            game_poss_2h = float(pace.get("game_poss_2h") or 0.0)
+        except Exception:
+            game_poss_2h = 0.0
+
+        mins_elapsed_2h = max(0.0, 24.0 - float(min_rem_2h))
+        poss_per_min = (game_poss_2h / mins_elapsed_2h) if (mins_elapsed_2h > 1e-6 and game_poss_2h > 0) else 0.0
+        exp_rem_poss = poss_per_min * float(min_rem_2h)
+
+        h1_total = float(h1_home + h1_away)
+        h1_margin = float(h1_home - h1_away)
+        obs_2h_total = float(live_total - h1_total)
+        obs_2h_margin = float(live_margin - h1_margin)
+
+        # Observed rates per possession (can be noisy early Q3)
+        obs_total_ppp = (obs_2h_total / game_poss_2h) if game_poss_2h > 1e-6 else 0.0
+        obs_margin_ppp = (obs_2h_margin / game_poss_2h) if game_poss_2h > 1e-6 else 0.0
+
+        # Stability baseline: total points per *game* possession ~ 2.24 in NBA
+        baseline_total_ppp = 2.24
+        w = min(0.85, max(0.0, game_poss_2h / 40.0))  # ramp in with possessions
+        blend_total_ppp = (w * obs_total_ppp) + ((1.0 - w) * baseline_total_ppp)
+
+        frac = max(0.0, min(1.0, float(min_rem_2h) / 24.0))
+
+        if exp_rem_poss > 0:
+            mu_final_total_live = float(live_total + exp_rem_poss * blend_total_ppp)
+        else:
+            # fallback to time scaling if we can't estimate pace
+            mu_final_total_live = float(live_total + mu2h_total * frac)
+
+        # For margin, blend observed per-possession with model's time-scaled remaining margin.
+        model_rem_margin = float(mu2h_margin) * frac
+        obs_rem_margin = float(exp_rem_poss * obs_margin_ppp) if exp_rem_poss > 0 else model_rem_margin
+        mu_final_margin_live = float(live_margin + ((1.0 - w) * model_rem_margin + w * obs_rem_margin))
+
+        mu_final_home_live = 0.5 * (mu_final_total_live + mu_final_margin_live)
+        mu_final_away_live = 0.5 * (mu_final_total_live - mu_final_margin_live)
 
     pred["_derived"] = {
         "min_remaining": min_rem,
@@ -553,6 +660,11 @@ def run_prediction():
         "clock_mmss": parse_pt_clock(clock),
         "period": period,
         "clock_str": clock,
+        # optional live-conditioned means for tracking
+        "mu_final_total": mu_final_total_live,
+        "mu_final_margin": mu_final_margin_live,
+        "mu_final_home": mu_final_home_live,
+        "mu_final_away": mu_final_away_live,
     }
 
     st.session_state.last_pred = pred
@@ -801,6 +913,14 @@ derived = pred.get("_derived", {}) or {}
 final_total_mu = (float(ft_lo) + float(ft_hi)) / 2.0 if ft_lo is not None else None
 final_margin_mu = (float(fm_lo) + float(fm_hi)) / 2.0 if fm_lo is not None else None
 
+# Volatility proxy from model uncertainty (Enhancements.txt)
+# Relative 80% PI width for final total.
+volatility = None
+if ft_lo is not None and ft_hi is not None and final_total_mu is not None:
+    width = float(ft_hi) - float(ft_lo)
+    denom = max(1.0, abs(float(final_total_mu)))
+    volatility = max(0.0, width / denom)
+
 # Team means (from bands)
 final_home_mu = (float(fh_lo) + float(fh_hi)) / 2.0 if fh_lo is not None else None
 final_away_mu = (float(fa_lo) + float(fa_hi)) / 2.0 if fa_lo is not None else None
@@ -842,6 +962,7 @@ recs = evaluate_markets(
     sd_team=None,
     inputs=inputs,
     policy=policy,
+    volatility=volatility,
 )
 
 st.markdown('<div class="pp-card">', unsafe_allow_html=True)
@@ -885,6 +1006,14 @@ if SHOW_DEV_TOOLS:
 # Tracking (SQLite + Export/Import)
 # -----------------------------
 st.markdown('<div class="pp-card">', unsafe_allow_html=True)
+
+show_hist = st.toggle(
+    "Show tracking history",
+    value=bool(st.session_state.get("pp_show_tracking_history", True)),
+    help="Shows probability drift over time for tracked bets.",
+)
+st.session_state["pp_show_tracking_history"] = bool(show_hist)
+
 render_tracking_panel(
     game_id=gid,
     home_name=home_name,
@@ -892,7 +1021,6 @@ render_tracking_panel(
     recs=recs,
     snapshot_every_min=int(st.session_state.snapshot_every_min),
     show_export_import=False,
-    show_snapshot_history=False,
+    show_snapshot_history=bool(show_hist),
 )
 st.markdown("</div>", unsafe_allow_html=True)
-

@@ -5,11 +5,21 @@ from typing import List, Tuple
 
 import numpy as np
 from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge
+from sklearn.pipeline import Pipeline
 
 from src.modeling.base import BaseTwoHeadModel, TwoHeadFitResult
 from src.modeling.types import TrainedHead
 from src.modeling.uncertainty import sigma_from_residuals
+
+
+def _with_imputer(est):
+    # Median is robust; also keeps behavior deterministic.
+    return Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("model", est),
+    ])
 
 
 class RidgeTwoHeadModel(BaseTwoHeadModel):
@@ -22,8 +32,8 @@ class RidgeTwoHeadModel(BaseTwoHeadModel):
         self._fit: TwoHeadFitResult | None = None
 
     def fit(self, X: np.ndarray, feature_names: List[str], y_total: np.ndarray, y_margin: np.ndarray) -> "RidgeTwoHeadModel":
-        mt = Ridge(alpha=self.alpha, random_state=0)
-        mm = Ridge(alpha=self.alpha, random_state=0)
+        mt = _with_imputer(Ridge(alpha=self.alpha, random_state=0))
+        mm = _with_imputer(Ridge(alpha=self.alpha, random_state=0))
 
         mt.fit(X, y_total)
         mm.fit(X, y_margin)
@@ -75,19 +85,23 @@ class RandomForestTwoHeadModel(BaseTwoHeadModel):
         y_total: np.ndarray,
         y_margin: np.ndarray,
     ) -> "RandomForestTwoHeadModel":
-        mt = RandomForestRegressor(
-            n_estimators=self.n_estimators,
-            max_depth=self.max_depth,
-            min_samples_leaf=self.min_samples_leaf,
-            random_state=0,
-            n_jobs=-1,
+        mt = _with_imputer(
+            RandomForestRegressor(
+                n_estimators=self.n_estimators,
+                max_depth=self.max_depth,
+                min_samples_leaf=self.min_samples_leaf,
+                random_state=0,
+                n_jobs=-1,
+            )
         )
-        mm = RandomForestRegressor(
-            n_estimators=self.n_estimators,
-            max_depth=self.max_depth,
-            min_samples_leaf=self.min_samples_leaf,
-            random_state=0,
-            n_jobs=-1,
+        mm = _with_imputer(
+            RandomForestRegressor(
+                n_estimators=self.n_estimators,
+                max_depth=self.max_depth,
+                min_samples_leaf=self.min_samples_leaf,
+                random_state=0,
+                n_jobs=-1,
+            )
         )
 
         mt.fit(X, y_total)

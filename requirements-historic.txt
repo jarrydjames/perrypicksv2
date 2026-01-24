@@ -1,0 +1,7 @@
+# Dependencies for one-time local historical scraping (OddsHarvester + Playwright).
+# Keep this OUT of the Streamlit/runtime requirements.
+
+# Keep versions compatible with OddsHarvester (see OddsHarvester/pyproject.toml)
+playwright>=1.57.0
+beautifulsoup4>=4.14.3
+lxml>=6.0.2

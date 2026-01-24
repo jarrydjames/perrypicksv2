@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from src.data.schedule import fetch_game_ids_for_seasons, load_game_ids, save_game_ids
+from src.oddsportal.priors_store import load_priors_by_game_id, priors_to_features
 from src.predict_from_gameid_v2 import (
     fetch_box,
     fetch_pbp_df,
@@ -103,8 +104,11 @@ def compile_two_seasons(cfg: CompileConfig) -> Path:
     rows: List[Dict] = []
     skipped = 0
 
+    priors_map = load_priors_by_game_id()
+    print(f"Loaded market priors: {len(priors_map)} games", flush=True)
+
     total_n = len(game_ids)
-    print(f"Compiling {total_n} games...")
+    print(f"Compiling {total_n} games...", flush=True)
 
     for i, gid in enumerate(game_ids, start=1):
         try:
@@ -130,6 +134,9 @@ def compile_two_seasons(cfg: CompileConfig) -> Path:
                 "h1_total": int(h1_home + h1_away),
                 "h1_margin": int(h1_home - h1_away),
             }
+
+            # Market priors (pregame total/spread/team totals)
+            row.update(priors_to_features(priors_map.get(gid)))
 
             # Behavior counts
             row.update(behavior_counts_1h(pbp))
@@ -158,7 +165,7 @@ def compile_two_seasons(cfg: CompileConfig) -> Path:
             skipped += 1
 
         if i % 50 == 0:
-            print(f"Progress: {i}/{total_n}  kept={len(rows)}  skipped={skipped}")
+            print(f"Progress: {i}/{total_n}  kept={len(rows)}  skipped={skipped}", flush=True)
 
         time.sleep(random.uniform(cfg.sleep_min_s, cfg.sleep_max_s))
 
@@ -170,9 +177,9 @@ def compile_two_seasons(cfg: CompileConfig) -> Path:
     df.to_parquet(tmp_path, index=False)
     tmp_path.replace(out_path)
 
-    print(f"Saved: {out_path}")
-    print(f"Rows kept: {len(df)}")
-    print(f"Rows skipped: {skipped}")
+    print(f"Saved: {out_path}", flush=True)
+    print(f"Rows kept: {len(df)}", flush=True)
+    print(f"Rows skipped: {skipped}", flush=True)
 
     return out_path
 
@@ -187,6 +194,8 @@ def main() -> None:
     ap.add_argument("--cache-box", type=str, default="data/raw/box")
     ap.add_argument("--cache-pbp", type=str, default="data/raw/pbp")
     ap.add_argument("--out", type=str, default="data/processed/halftime_training_2seasons.parquet")
+    ap.add_argument("--sleep-min", type=float, default=0.12)
+    ap.add_argument("--sleep-max", type=float, default=0.30)
     args = ap.parse_args()
 
     cfg = CompileConfig(
@@ -196,6 +205,8 @@ def main() -> None:
         game_ids_path=args.game_ids,
         cache_box_dir=args.cache_box,
         cache_pbp_dir=args.cache_pbp,
+        sleep_min_s=float(args.sleep_min),
+        sleep_max_s=float(args.sleep_max),
     )
     compile_two_seasons(cfg)
 

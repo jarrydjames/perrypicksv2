@@ -76,10 +76,14 @@ def _is_made(action: Mapping[str, Any]) -> bool:
     return str(action.get("shotResult") or "").lower() == "made"
 
 
-def team_stats_from_pbp_first_half(actions: Iterable[Mapping[str, Any]], *, team_tricode: str) -> TeamHalfStats:
-    """Compute 1H team stats from PBP actions.
+def team_stats_from_pbp(
+    actions: Iterable[Mapping[str, Any]], *, team_tricode: str, max_period: int
+) -> TeamHalfStats:
+    """Compute team stats from PBP actions up through max_period.
 
-    Uses only periods 1-2.
+    This is intentionally simple + robust and used for both:
+    - 1H (max_period=2)
+    - 2H-to-now (max_period=4, but caller can filter further)
 
     Counting rules (robust + simple):
     - FGA: actionType in {'2pt','3pt'}
@@ -102,7 +106,7 @@ def team_stats_from_pbp_first_half(actions: Iterable[Mapping[str, Any]], *, team
 
     for a in actions:
         try:
-            if int(a.get("period", 0)) > 2:
+            if int(a.get("period", 0)) > int(max_period):
                 continue
         except Exception:
             continue
@@ -152,6 +156,25 @@ def team_stats_from_pbp_first_half(actions: Iterable[Mapping[str, Any]], *, team
     )
 
 
+def team_stats_from_pbp_first_half(actions: Iterable[Mapping[str, Any]], *, team_tricode: str) -> TeamHalfStats:
+    """Backwards-compatible wrapper (1H only)."""
+
+    return team_stats_from_pbp(actions, team_tricode=team_tricode, max_period=2)
+
+
+def _filter_actions_by_period(
+    actions: Iterable[Mapping[str, Any]], *, min_period: int, max_period: int
+) -> Iterable[Mapping[str, Any]]:
+    for a in actions:
+        try:
+            p = int(a.get("period", 0))
+        except Exception:
+            continue
+        if p < int(min_period) or p > int(max_period):
+            continue
+        yield a
+
+
 def game_possessions_first_half(
     actions: Iterable[Mapping[str, Any]], *, home_tri: str, away_tri: str
 ) -> Dict[str, float]:
@@ -161,8 +184,8 @@ def game_possessions_first_half(
     (`home_efg`, `home_ftr`, ...) but computed from 1H only.
     """
 
-    h = team_stats_from_pbp_first_half(actions, team_tricode=home_tri)
-    a = team_stats_from_pbp_first_half(actions, team_tricode=away_tri)
+    h = team_stats_from_pbp(actions, team_tricode=home_tri, max_period=2)
+    a = team_stats_from_pbp(actions, team_tricode=away_tri, max_period=2)
 
     game_poss = 0.5 * (h.poss + a.poss)
 
@@ -186,4 +209,43 @@ def game_possessions_first_half(
         "away_tpar": float(a.tpar),
         "away_tor": float(a.tor),
         "away_orbp": float(a.orbp_vs(h.dreb)),
+    }
+
+
+def live_2h_pace_from_pbp(
+    actions: Iterable[Mapping[str, Any]], *, home_tri: str, away_tri: str
+) -> Dict[str, float]:
+    """Compute 2H-to-now possessions + PPP from PBP actions.
+
+    This is for *live conditioning* (tracking), not training.
+
+    Returns keys:
+    - game_poss_2h
+    - home_poss_2h, away_poss_2h
+    - home_ppp_2h, away_ppp_2h
+
+    If there are no 2H actions yet, values will be zeros.
+    """
+
+    a2 = list(_filter_actions_by_period(actions, min_period=3, max_period=4))
+    if not a2:
+        return {
+            "home_poss_2h": 0.0,
+            "away_poss_2h": 0.0,
+            "game_poss_2h": 0.0,
+            "home_ppp_2h": 0.0,
+            "away_ppp_2h": 0.0,
+        }
+
+    h = team_stats_from_pbp(a2, team_tricode=home_tri, max_period=4)
+    a = team_stats_from_pbp(a2, team_tricode=away_tri, max_period=4)
+
+    game_poss = 0.5 * (h.poss + a.poss)
+
+    return {
+        "home_poss_2h": float(h.poss),
+        "away_poss_2h": float(a.poss),
+        "game_poss_2h": float(game_poss),
+        "home_ppp_2h": float(h.ppp),
+        "away_ppp_2h": float(a.ppp),
     }
