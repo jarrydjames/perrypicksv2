@@ -622,6 +622,10 @@ def run_prediction():
         poss_per_min = (game_poss_2h / mins_elapsed_2h) if (mins_elapsed_2h > 1e-6 and game_poss_2h > 0) else 0.0
         exp_rem_poss = poss_per_min * float(min_rem_2h)
 
+        # Pull halftime scores from prediction payload (don’t rely on outer-scope vars)
+        h1_home = float(pred.get("h1_home", 0.0) or 0.0)
+        h1_away = float(pred.get("h1_away", 0.0) or 0.0)
+
         h1_total = float(h1_home + h1_away)
         h1_margin = float(h1_home - h1_away)
         obs_2h_total = float(live_total - h1_total)
