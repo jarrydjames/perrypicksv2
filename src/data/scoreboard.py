@@ -1,27 +1,33 @@
 from __future__ import annotations
 
-"""NBA scoreboard fetcher (CDN).
+"""Game picker backend for Streamlit.
 
-Used for Streamlit UX:
-- pick a date
-- show a dropdown of games with live status (Q + clock)
+Goal:
+- let user pick a date
+- show games for that date
+- include live status (Q/clock/score) when available
 
-Endpoint:
-  https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_YYYYMMDD.json
+Why not use nba.com "todaysScoreboard"?
+- It frequently returns 403 on Streamlit Cloud.
+Why not use data.nba.net?
+- SSL/cert hostname issues in some environments.
 
-We keep this module dependency-light and resilient to missing fields.
+So we use a reliable combo:
+1) scheduleLeagueV2.json (public, works from cloud)
+2) per-game live boxscore_{gameId}.json for status + score
+
+This module stays streamlit-free (so it can be reused in scripts/tests).
 """
 
 import datetime as dt
-import json
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Optional
+from typing import Any, List, Optional
 
 import requests
 
 
-CDN_SCOREBOARD = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_{yyyymmdd}.json"
-DATA_NBA_SCOREBOARD = "https://data.nba.net/prod/v2/{yyyymmdd}/scoreboard.json"
+SCHEDULE_URL = "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json"
+BOX_URL = "https://cdn.nba.com/static/json/liveData/boxscore/boxscore_{gid}.json"
 
 
 @dataclass(frozen=True)
@@ -40,14 +46,6 @@ def _safe_str(x: Any) -> str:
     return str(x).strip() if x is not None else ""
 
 
-def _team_name(team_block: dict) -> str:
-    for k in ("teamName", "teamCity", "teamTricode", "name"):
-        v = team_block.get(k)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-    return "TEAM"
-
-
 def _get_json(url: str, *, timeout_s: int) -> dict:
     headers = {
         "User-Agent": "Mozilla/5.0",
@@ -59,32 +57,70 @@ def _get_json(url: str, *, timeout_s: int) -> dict:
     return r.json()
 
 
-def fetch_scoreboard(date: dt.date, *, timeout_s: int = 10) -> List[ScoreboardGame]:
-    yyyymmdd = date.strftime("%Y%m%d")
+def _extract_team_tricode(team: dict, fallback: str) -> str:
+    for k in ("teamTricode", "triCode", "abbreviation"):
+        v = team.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip().upper()
+    return fallback
 
-    data = None
-    last_err: Exception | None = None
 
-    # Primary: nba CDN (sometimes 403s on cloud IPs)
+def _fetch_live_status(gid: str, *, timeout_s: int) -> tuple[str, Optional[int], Optional[str], Optional[int], Optional[int]]:
+    """Return (status_text, period, clock, home_score, away_score)."""
+
     try:
-        data = _get_json(CDN_SCOREBOARD.format(yyyymmdd=yyyymmdd), timeout_s=timeout_s)
-    except Exception as e:
-        last_err = e
-        data = None
+        data = _get_json(BOX_URL.format(gid=gid), timeout_s=timeout_s)
+        game = (data or {}).get("game") or {}
 
-    # Fallback: data.nba.net (usually more reliable from Streamlit Cloud)
-    if data is None:
+        status_text = _safe_str(game.get("gameStatusText") or game.get("gameStatus") or "")
+        period = None
         try:
-            data = _get_json(DATA_NBA_SCOREBOARD.format(yyyymmdd=yyyymmdd), timeout_s=timeout_s)
-        except Exception as e:
-            last_err = e
-            data = None
+            period = int(game.get("period")) if game.get("period") is not None else None
+        except Exception:
+            period = None
 
-    if data is None:
-        raise RuntimeError(f"Failed to fetch scoreboard ({yyyymmdd}): {last_err!r}")
+        clock = None
+        c = game.get("gameClock")
+        if isinstance(c, str) and c.strip():
+            clock = c.strip()
 
-    # Parse either schema
-    games = (((data or {}).get("scoreboard") or {}).get("games")) or data.get("games") or []
+        home = game.get("homeTeam") or {}
+        away = game.get("awayTeam") or {}
+        hs = None
+        a_s = None
+        try:
+            hs = int(((home.get("statistics") or {}).get("points")) or 0)
+        except Exception:
+            hs = None
+        try:
+            a_s = int(((away.get("statistics") or {}).get("points")) or 0)
+        except Exception:
+            a_s = None
+
+        return status_text, period, clock, hs, a_s
+    except Exception:
+        return "", None, None, None, None
+
+
+def fetch_scoreboard(date: dt.date, *, timeout_s: int = 10, include_live: bool = True) -> List[ScoreboardGame]:
+    """Fetch games for a given date.
+
+    Uses scheduleLeagueV2.json for IDs + teams.
+    Optionally enriches with live status/score by calling boxscore_{gid}.json.
+    """
+
+    ymd = date.strftime("%Y-%m-%d")
+    payload = _get_json(SCHEDULE_URL, timeout_s=timeout_s)
+
+    league = (payload or {}).get("leagueSchedule") or {}
+    game_dates = league.get("gameDates") or []
+
+    games: list[dict] = []
+    for gd in game_dates:
+        if _safe_str(gd.get("gameDate")) == ymd:
+            games = gd.get("games") or []
+            break
+
     out: List[ScoreboardGame] = []
 
     for g in games:
@@ -92,96 +128,26 @@ def fetch_scoreboard(date: dt.date, *, timeout_s: int = 10) -> List[ScoreboardGa
         if not gid:
             continue
 
-        # Schema A (cdn.nba.com): awayTeam/homeTeam
-        if isinstance(g.get("awayTeam"), dict) and isinstance(g.get("homeTeam"), dict):
-            away_team = g.get("awayTeam") or {}
-            home_team = g.get("homeTeam") or {}
-            away = _team_name(away_team)
-            home = _team_name(home_team)
+        away_team = g.get("awayTeam") or {}
+        home_team = g.get("homeTeam") or {}
+        away = _extract_team_tricode(away_team, "AWAY")
+        home = _extract_team_tricode(home_team, "HOME")
 
-            status = _safe_str(g.get("gameStatusText") or g.get("gameStatus"))
+        status_text = _safe_str(g.get("gameStatusText") or "")
+        period = None
+        clock = None
+        away_score = None
+        home_score = None
 
-            period = None
-            try:
-                period = int(g.get("period")) if g.get("period") is not None else None
-            except Exception:
-                period = None
-
-            clock = None
-            c = g.get("gameClock")
-            if isinstance(c, str) and c.strip():
-                clock = c.strip()
-
-            away_score = None
-            home_score = None
-            try:
-                away_score = int(away_team.get("score")) if away_team.get("score") is not None else None
-            except Exception:
-                away_score = None
-
-            try:
-                home_score = int(home_team.get("score")) if home_team.get("score") is not None else None
-            except Exception:
-                home_score = None
-
-        # Schema B (data.nba.net): vTeam/hTeam
-        else:
-            v = (g.get("vTeam") or {}) if isinstance(g.get("vTeam"), dict) else {}
-            h = (g.get("hTeam") or {}) if isinstance(g.get("hTeam"), dict) else {}
-
-            away = _safe_str(v.get("triCode") or v.get("nickname") or v.get("teamName")) or "AWAY"
-            home = _safe_str(h.get("triCode") or h.get("nickname") or h.get("teamName")) or "HOME"
-
-            status_num = None
-            try:
-                status_num = int(g.get("statusNum")) if g.get("statusNum") is not None else None
-            except Exception:
-                status_num = None
-
-            status = _safe_str(g.get("gameStatusText"))
-            if not status:
-                if status_num == 1:
-                    status = "Pre"
-                elif status_num == 2:
-                    status = "Live"
-                elif status_num == 3:
-                    status = "Final"
-                else:
-                    status = ""
-
-            period = None
-            per = g.get("period")
-            if isinstance(per, dict):
-                try:
-                    period = int(per.get("current")) if per.get("current") is not None else None
-                except Exception:
-                    period = None
-
-            clock = None
-            c = g.get("clock")
-            if isinstance(c, str) and c.strip():
-                clock = c.strip()
-
-            away_score = None
-            home_score = None
-            try:
-                away_score = int(v.get("score")) if v.get("score") is not None else None
-            except Exception:
-                away_score = None
-
-            try:
-                home_score = int(h.get("score")) if h.get("score") is not None else None
-            except Exception:
-                home_score = None
-
-        status = (status or "").strip()
+        if include_live:
+            status_text, period, clock, home_score, away_score = _fetch_live_status(gid, timeout_s=min(8, timeout_s))
 
         out.append(
             ScoreboardGame(
                 game_id=gid,
                 away=away,
                 home=home,
-                status_text=status,
+                status_text=status_text,
                 period=period,
                 clock=clock,
                 away_score=away_score,
@@ -195,18 +161,15 @@ def fetch_scoreboard(date: dt.date, *, timeout_s: int = 10) -> List[ScoreboardGa
 def format_game_label(g: ScoreboardGame) -> str:
     bits = []
 
-    # Score (if live)
     if g.away_score is not None and g.home_score is not None and (g.away_score + g.home_score) > 0:
         bits.append(f"{g.home_score}-{g.away_score}")
 
-    # Status / clock
-    status = (g.status_text or "").strip()
     if g.period is not None and g.clock:
         bits.append(f"Q{g.period} {g.clock}")
     elif g.period is not None:
         bits.append(f"Q{g.period}")
-    elif status:
-        bits.append(status)
+    elif g.status_text:
+        bits.append(str(g.status_text).strip())
 
     tail = " · ".join([b for b in bits if b])
     tail = ("— " + tail) if tail else ""
