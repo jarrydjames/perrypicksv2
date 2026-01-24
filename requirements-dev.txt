@@ -3,6 +3,7 @@
 nba_api
 
 # Backtest-only modeling libs (keep Streamlit runtime deps clean)
+matplotlib
 xgboost
 catboost
 

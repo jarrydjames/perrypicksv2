@@ -46,6 +46,23 @@ def _ev_profit(*, p: float, stake: float, odds: int) -> float:
     return float(p) * profit_if_win - (1.0 - float(p)) * float(stake)
 
 
+def _volatility_from_band(*, mu: Optional[float], lo: Optional[float], hi: Optional[float]) -> float:
+    """Volatility proxy used to shrink Kelly.
+
+    Defined in Phase 2 plan as:
+      (upper80 - lower80) / prediction_mean
+
+    We clamp denominator to avoid blowing up near 0.
+    """
+
+    if mu is None or lo is None or hi is None:
+        return 0.0
+
+    width = float(hi) - float(lo)
+    denom = max(1.0, abs(float(mu)))
+    return max(0.0, width / denom)
+
+
 def _add_rec(
     recs: List[Dict[str, Any]],
     *,
@@ -104,6 +121,36 @@ def evaluate_markets(
     """
     recs: List[Dict[str, Any]] = []
 
+    bands = pred.get("bands80", {}) or {}
+
+    # Volatility proxy per target (used for Kelly shrink)
+    total_vol = float(volatility) if volatility is not None else _volatility_from_band(
+        mu=final_total_mu,
+        lo=(bands.get("final_total") or [None, None])[0],
+        hi=(bands.get("final_total") or [None, None])[1],
+    )
+    margin_vol = float(volatility) if volatility is not None else _volatility_from_band(
+        mu=final_margin_mu,
+        lo=(bands.get("final_margin") or [None, None])[0],
+        hi=(bands.get("final_margin") or [None, None])[1],
+    )
+    home_vol = float(volatility) if volatility is not None else _volatility_from_band(
+        mu=final_home_mu,
+        lo=(bands.get("final_home") or [None, None])[0],
+        hi=(bands.get("final_home") or [None, None])[1],
+    )
+    away_vol = float(volatility) if volatility is not None else _volatility_from_band(
+        mu=final_away_mu,
+        lo=(bands.get("final_away") or [None, None])[0],
+        hi=(bands.get("final_away") or [None, None])[1],
+    )
+
+    # Fallback: if team bands absent, reuse total/margin volatility.
+    if home_vol <= 0:
+        home_vol = max(total_vol, margin_vol)
+    if away_vol <= 0:
+        away_vol = max(total_vol, margin_vol)
+
     # Game total
     if final_total_mu is not None and float(inputs.total_line) > 0:
         p_over = prob_over_under_from_mean_sd(final_total_mu, sd_total, float(inputs.total_line))
@@ -115,7 +162,7 @@ def evaluate_markets(
             odds=int(inputs.odds_over),
             p=p_over,
             kelly_mult=float(inputs.kelly_mult),
-            volatility=volatility,
+            volatility=total_vol,
         )
         _add_rec(
             recs,
@@ -125,7 +172,7 @@ def evaluate_markets(
             odds=int(inputs.odds_under),
             p=(1.0 - p_over),
             kelly_mult=float(inputs.kelly_mult),
-            volatility=volatility,
+            volatility=total_vol,
         )
 
     # Spread
@@ -139,7 +186,7 @@ def evaluate_markets(
             odds=int(inputs.odds_home),
             p=p_home_cover,
             kelly_mult=float(inputs.kelly_mult),
-            volatility=volatility,
+            volatility=margin_vol,
         )
         _add_rec(
             recs,
@@ -149,7 +196,7 @@ def evaluate_markets(
             odds=int(inputs.odds_away),
             p=(1.0 - p_home_cover),
             kelly_mult=float(inputs.kelly_mult),
-            volatility=volatility,
+            volatility=margin_vol,
         )
 
     # Moneyline (derived from margin distribution)
@@ -163,7 +210,7 @@ def evaluate_markets(
             odds=int(inputs.moneyline_home),
             p=p_home_win,
             kelly_mult=float(inputs.kelly_mult),
-            volatility=volatility,
+            volatility=margin_vol,
         )
         _add_rec(
             recs,
@@ -173,7 +220,7 @@ def evaluate_markets(
             odds=int(inputs.moneyline_away),
             p=(1.0 - p_home_win),
             kelly_mult=float(inputs.kelly_mult),
-            volatility=volatility,
+            volatility=margin_vol,
         )
 
     # Team totals
@@ -195,7 +242,7 @@ def evaluate_markets(
                 odds=int(inputs.odds_team_over_home),
                 p=p_over,
                 kelly_mult=float(inputs.kelly_mult),
-                volatility=volatility,
+                volatility=home_vol,
             )
             _add_rec(
                 recs,
@@ -205,7 +252,7 @@ def evaluate_markets(
                 odds=int(inputs.odds_team_under_home),
                 p=(1.0 - p_over),
                 kelly_mult=float(inputs.kelly_mult),
-                volatility=volatility,
+                volatility=home_vol,
             )
 
     if final_away_mu is not None and inputs.team_total_away and inputs.team_total_away > 0:
@@ -219,7 +266,7 @@ def evaluate_markets(
                 odds=int(inputs.odds_team_over_away),
                 p=p_over,
                 kelly_mult=float(inputs.kelly_mult),
-                volatility=volatility,
+                volatility=away_vol,
             )
             _add_rec(
                 recs,
@@ -229,7 +276,7 @@ def evaluate_markets(
                 odds=int(inputs.odds_team_under_away),
                 p=(1.0 - p_over),
                 kelly_mult=float(inputs.kelly_mult),
-                volatility=volatility,
+                volatility=away_vol,
             )
 
     recs.sort(key=lambda r: r["edge"], reverse=True)
