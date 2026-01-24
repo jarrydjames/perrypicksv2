@@ -105,7 +105,14 @@ def _box_game_time_utc(box_path: Path) -> Optional[str]:
 
 
 def attach_game_time_utc(df: pd.DataFrame, *, box_dir: Path) -> pd.DataFrame:
-    """Attach gameTimeUTC from cached box json."""
+    """Attach gameTimeUTC from cached box json.
+
+    If the local box cache is missing (common on fresh clones), we fall back to a
+    deterministic ordering key so walk-forward splits still work.
+
+    NOTE: This fallback does *not* represent true chronological ordering, but it
+    is good enough for quick local experiments.
+    """
 
     times: List[Optional[str]] = []
     for gid in df["game_id"].astype(str).tolist():
@@ -114,9 +121,26 @@ def attach_game_time_utc(df: pd.DataFrame, *, box_dir: Path) -> pd.DataFrame:
 
     out = df.copy()
     out["gameTimeUTC"] = times
-    out = out.dropna(subset=["gameTimeUTC"]).copy()
-    out["gameTimeUTC"] = pd.to_datetime(out["gameTimeUTC"], utc=True, errors="coerce")
-    out = out.dropna(subset=["gameTimeUTC"]).copy()
+
+    # If we have at least some timestamps, use them.
+    if out["gameTimeUTC"].notna().any():
+        out = out.dropna(subset=["gameTimeUTC"]).copy()
+        out["gameTimeUTC"] = pd.to_datetime(out["gameTimeUTC"], utc=True, errors="coerce")
+        out = out.dropna(subset=["gameTimeUTC"]).copy()
+        return out
+
+    # Fallback: create a pseudo-timestamp for stable sorting
+    # Prefer season + game_id if available.
+    if "season_end_yy" in out.columns:
+        key = out["season_end_yy"].astype(str).str.zfill(4) + "_" + out["game_id"].astype(str)
+    else:
+        key = out["game_id"].astype(str)
+
+    out["gameTimeUTC"] = pd.to_datetime(key, errors="coerce", utc=True)
+    # If coercion failed (likely), just set a monotonic range.
+    if out["gameTimeUTC"].isna().all():
+        out["gameTimeUTC"] = pd.to_datetime(np.arange(len(out)), unit="s", utc=True)
+
     return out
 
 

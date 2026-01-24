@@ -163,7 +163,8 @@ def run_backtest(
             spread_mask = np.isfinite(market_spread_te) & np.isfinite(final_margin_te)
             win_mask = np.isfinite(final_margin_te)
 
-            p_win = prob_moneyline_win_from_mean_sd(mu_final_margin, sig_m)
+            # Vectorized win probability from final margin distribution
+            p_win = p_home_win(mu_final_margin, sig_m)
             y_win = (final_margin_te > 0).astype(float)
 
             p_over = np.full_like(p_win, np.nan)
