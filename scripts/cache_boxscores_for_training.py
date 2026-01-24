@@ -22,7 +22,14 @@ import json
 import time
 from pathlib import Path
 
+import sys
+
 import pandas as pd
+
+# Allow running as a plain script without needing PYTHONPATH tweaks.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from src.predict_from_gameid_v2 import fetch_box
 
